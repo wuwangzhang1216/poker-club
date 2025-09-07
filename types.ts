@@ -46,12 +46,11 @@ export interface LobbyConfig {
     players: PlayerConfig[];
     smallBlind: number;
     bigBlind: number;
-    gameState?: GameState | null;
 }
 
 
 export interface Player {
-    id:string;
+    id: string;
     name: string;
     chips: number;
     hand: Card[];
