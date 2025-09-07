@@ -1,11 +1,10 @@
-
 import React, { useState, useMemo } from 'react';
 import { LobbyConfig, PlayerConfig } from '../types';
 
 interface GameLobbyProps {
     lobbyConfig: LobbyConfig;
     onStartGame: () => void;
-    onBackToSetup: () => void;
+    onEndLobby: () => void;
     onLeaveLobby: () => void;
     onUpdateLobby: (updatedLobby: LobbyConfig) => void;
     currentUserId: string | null;
@@ -50,7 +49,7 @@ const JoinForm: React.FC<{ onJoin: (name: string, chips: number) => void }> = ({
 };
 
 
-const GameLobby: React.FC<GameLobbyProps> = ({ lobbyConfig, onStartGame, onBackToSetup, onLeaveLobby, onUpdateLobby, currentUserId, onSetCurrentUser }) => {
+const GameLobby: React.FC<GameLobbyProps> = ({ lobbyConfig, onStartGame, onEndLobby, onLeaveLobby, onUpdateLobby, currentUserId, onSetCurrentUser }) => {
     const { players, smallBlind, bigBlind } = lobbyConfig;
     const [copyButtonText, setCopyButtonText] = useState('Copy');
 
@@ -78,12 +77,14 @@ const GameLobby: React.FC<GameLobbyProps> = ({ lobbyConfig, onStartGame, onBackT
             chips,
             isAI: false,
         };
+        // This would be an API call: POST /api/lobbies/:id/players
         const updatedLobby = { ...lobbyConfig, players: [...lobbyConfig.players, newPlayer] };
-        onUpdateLobby(updatedLobby);
         onSetCurrentUser(newPlayer.id);
+        onUpdateLobby(updatedLobby);
     };
 
     const handleAddAI = () => {
+        if (players.length >= 8) return;
         const aiCount = players.filter(p => p.isAI).length + 1;
         const newAI: PlayerConfig = {
             id: generateId(),
@@ -91,10 +92,12 @@ const GameLobby: React.FC<GameLobbyProps> = ({ lobbyConfig, onStartGame, onBackT
             chips: 1000,
             isAI: true,
         };
+        // This would be an API call: POST /api/lobbies/:id/players (with isAI: true)
         onUpdateLobby({ ...lobbyConfig, players: [...lobbyConfig.players, newAI] });
     };
 
     const handleRemovePlayer = (id: string) => {
+        // This would be an API call: DELETE /api/lobbies/:id/players/:playerId
         onUpdateLobby({ ...lobbyConfig, players: players.filter(p => p.id !== id) });
     };
 
@@ -147,7 +150,7 @@ const GameLobby: React.FC<GameLobbyProps> = ({ lobbyConfig, onStartGame, onBackT
                 </div>
                 
                 <div className="flex space-x-4 pt-4">
-                    <button onClick={isHost ? onBackToSetup : onLeaveLobby} className="w-full py-3 text-xl action-button secondary">
+                    <button onClick={isHost ? onEndLobby : onLeaveLobby} className="w-full py-3 text-xl action-button secondary">
                         {isHost ? 'Exit Lobby' : 'Leave Lobby'}
                     </button>
                     {isHost ? (
