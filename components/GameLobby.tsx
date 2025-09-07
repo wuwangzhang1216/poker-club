@@ -1,17 +1,15 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo } from 'react';
 import { LobbyConfig, PlayerConfig } from '../types';
 
 interface GameLobbyProps {
     lobbyConfig: LobbyConfig;
     onStartGame: () => void;
-    onEndLobby: () => void;
     onLeaveLobby: () => void;
-    onUpdateLobby: (updatedLobby: LobbyConfig) => void;
+    onJoinLobby: (name: string, chips: number) => void;
+    onAddAI: () => void;
+    onRemovePlayer: (id: string) => void;
     currentUserId: string | null;
-    onSetCurrentUser: (id: string) => void;
 }
-
-const generateId = () => Math.random().toString(36).substring(2, 9);
 
 const JoinForm: React.FC<{ onJoin: (name: string, chips: number) => void }> = ({ onJoin }) => {
     const [name, setName] = useState('');
@@ -49,7 +47,7 @@ const JoinForm: React.FC<{ onJoin: (name: string, chips: number) => void }> = ({
 };
 
 
-const GameLobby: React.FC<GameLobbyProps> = ({ lobbyConfig, onStartGame, onEndLobby, onLeaveLobby, onUpdateLobby, currentUserId, onSetCurrentUser }) => {
+const GameLobby: React.FC<GameLobbyProps> = ({ lobbyConfig, onStartGame, onLeaveLobby, onJoinLobby, onAddAI, onRemovePlayer, currentUserId }) => {
     const { players, smallBlind, bigBlind } = lobbyConfig;
     const [copyButtonText, setCopyButtonText] = useState('Copy');
     
@@ -63,56 +61,12 @@ const GameLobby: React.FC<GameLobbyProps> = ({ lobbyConfig, onStartGame, onEndLo
         [players, currentUserId]
     );
 
-    useEffect(() => {
-        // This effect runs for the host to update the sharable URL with the latest lobby state.
-        if (isHost) {
-            try {
-                const encodedConfig = btoa(JSON.stringify(lobbyConfig));
-                const currentUrl = new URL(window.location.href);
-                currentUrl.hash = encodedConfig;
-                // Use replaceState to avoid cluttering browser history
-                window.history.replaceState(null, '', currentUrl.toString());
-            } catch (e) {
-                console.warn("Could not update URL with lobby state.", e);
-            }
-        }
-    }, [lobbyConfig, isHost]);
-
     const handleCopyLink = () => {
         navigator.clipboard.writeText(window.location.href).then(() => {
             setCopyButtonText('Copied!');
             setTimeout(() => setCopyButtonText('Copy'), 2000);
         });
     };
-    
-    const handleJoinLobby = (name: string, chips: number) => {
-        const newPlayer: PlayerConfig = {
-            id: generateId(),
-            name,
-            chips,
-            isAI: false,
-        };
-        const updatedLobby = { ...lobbyConfig, players: [...lobbyConfig.players, newPlayer] };
-        onSetCurrentUser(newPlayer.id);
-        onUpdateLobby(updatedLobby);
-    };
-
-    const handleAddAI = () => {
-        if (players.length >= 8) return;
-        const aiCount = players.filter(p => p.isAI).length + 1;
-        const newAI: PlayerConfig = {
-            id: generateId(),
-            name: `Gemini Agent ${aiCount}`,
-            chips: 1000,
-            isAI: true,
-        };
-        onUpdateLobby({ ...lobbyConfig, players: [...lobbyConfig.players, newAI] });
-    };
-
-    const handleRemovePlayer = (id: string) => {
-        onUpdateLobby({ ...lobbyConfig, players: players.filter(p => p.id !== id) });
-    };
-
 
     return (
         <div className="flex items-center justify-center min-h-screen bg-[#0A0A0A] py-8">
@@ -125,7 +79,7 @@ const GameLobby: React.FC<GameLobbyProps> = ({ lobbyConfig, onStartGame, onEndLo
                         <input
                             type="text"
                             readOnly
-                            value={window.location.href}
+                            value={window.location.href.split('#')[0]}
                             className="flex-grow p-2 bg-[#1A1A1A] border border-neutral-700 rounded-md text-neutral-400 font-mono"
                         />
                         <button onClick={handleCopyLink} className="px-4 py-2 action-button secondary w-24">{copyButtonText}</button>
@@ -143,15 +97,15 @@ const GameLobby: React.FC<GameLobbyProps> = ({ lobbyConfig, onStartGame, onEndLo
                                <span className="flex-grow font-semibold text-white text-lg">{player.name}</span>
                                <span className="font-mono text-lg text-[#F7E7CE]">${player.chips}</span>
                                {isHost && !player.isHost && (
-                                   <button onClick={() => handleRemovePlayer(player.id)} className="px-2 py-1 bg-red-800/80 rounded-md hover:bg-red-700">
+                                   <button onClick={() => onRemovePlayer(player.id)} className="px-2 py-1 bg-red-800/80 rounded-md hover:bg-red-700">
                                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm4 0a1 1 0 012 0v6a1 1 0 11-2 0V8z" clipRule="evenodd" /></svg>
                                    </button>
                                )}
                             </div>
                         ))}
                      </div>
-                     {!isCurrentUserInLobby && <JoinForm onJoin={handleJoinLobby} />}
-                     {isHost && players.length < 8 && <button onClick={handleAddAI} className="w-full py-2 mt-2 action-button secondary">Add AI Player</button>}
+                     {!isCurrentUserInLobby && <JoinForm onJoin={onJoinLobby} />}
+                     {isHost && players.length < 8 && <button onClick={onAddAI} className="w-full py-2 mt-2 action-button secondary">Add AI Player</button>}
                 </div>
 
                 <div className="flex justify-between items-center bg-[#2D2D2D] p-3 rounded-md">
@@ -162,7 +116,7 @@ const GameLobby: React.FC<GameLobbyProps> = ({ lobbyConfig, onStartGame, onEndLo
                 </div>
                 
                 <div className="flex space-x-4 pt-4">
-                    <button onClick={isHost ? onEndLobby : onLeaveLobby} className="w-full py-3 text-xl action-button secondary">
+                    <button onClick={onLeaveLobby} className="w-full py-3 text-xl action-button secondary">
                         {isHost ? 'Exit Lobby' : 'Leave Lobby'}
                     </button>
                     {isHost ? (

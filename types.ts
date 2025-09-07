@@ -91,6 +91,7 @@ export interface GameState {
     currentBet: number; // The highest bet in the current round
     minRaise: number;
     lastRaiserIndex: number; // Index of the player who last bet or raised
+    playerStats?: Record<string, PlayerStats>; // Stats sent from server
 }
 
 export enum HandRank {
