@@ -91,6 +91,15 @@ const App: React.FC = () => {
         };
     }, [appStage]);
 
+    // Effect to transition from lobby to game for all players
+    useEffect(() => {
+        if (lobbyConfig?.gameState && appStage === 'lobby') {
+            setGameState(lobbyConfig.gameState);
+            setIsGameOver(false);
+            setAppStage('playing');
+        }
+    }, [lobbyConfig, appStage]);
+
     const handleCreateLobby = (hostConfig: PlayerConfig, smallBlind: number, bigBlind: number) => {
         const lobbyId = generateId();
         const newLobbyConfig: LobbyConfig = {
@@ -101,6 +110,7 @@ const App: React.FC = () => {
             ],
             smallBlind,
             bigBlind,
+            gameState: null,
         };
         
         localStorage.setItem(`${LOBBY_PREFIX}${lobbyId}`, JSON.stringify(newLobbyConfig));
@@ -143,7 +153,7 @@ const App: React.FC = () => {
             hasActed: false,
         }));
 
-        setGameState({
+        const initialGameState: GameState = {
             players: newPlayers,
             deck: [],
             communityCards: [],
@@ -158,10 +168,12 @@ const App: React.FC = () => {
             currentBet: 0,
             minRaise: lobbyConfig.bigBlind,
             lastRaiserIndex: -1
-        });
-        setIsGameOver(false);
-        setAppStage('playing');
-    }, [lobbyConfig]);
+        };
+        
+        const updatedLobby = { ...lobbyConfig, gameState: initialGameState };
+        updateLobby(updatedLobby);
+
+    }, [lobbyConfig, updateLobby]);
 
     const handleShowdown = useCallback((players: Player[], pot: number, communityCards: Card[]) => {
         const playersWithResetBets = players.map(p => ({ ...p, bet: 0 }));
