@@ -68,6 +68,29 @@ const App: React.FC = () => {
         }
     }, []);
 
+    // Effect to synchronize lobby state across tabs/windows
+    useEffect(() => {
+        const handleStorageChange = (event: StorageEvent) => {
+            const params = new URLSearchParams(window.location.search);
+            const lobbyId = params.get('lobby');
+
+            if (appStage === 'lobby' && lobbyId && event.key === `${LOBBY_PREFIX}${lobbyId}` && event.newValue) {
+                try {
+                    const updatedLobby: LobbyConfig = JSON.parse(event.newValue);
+                    setLobbyConfig(updatedLobby);
+                } catch (e) {
+                    console.error("Failed to parse updated lobby from storage event", e);
+                }
+            }
+        };
+
+        window.addEventListener('storage', handleStorageChange);
+
+        return () => {
+            window.removeEventListener('storage', handleStorageChange);
+        };
+    }, [appStage]);
+
     const handleCreateLobby = (hostConfig: PlayerConfig, smallBlind: number, bigBlind: number) => {
         const lobbyId = generateId();
         const newLobbyConfig: LobbyConfig = {
