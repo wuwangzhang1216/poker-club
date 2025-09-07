@@ -1,4 +1,5 @@
 
+
 export enum Suit {
     HEARTS = '♥',
     DIAMONDS = '♦',
@@ -44,6 +45,7 @@ export interface PlayerConfig {
 }
 
 export interface LobbyConfig {
+    id?: string;
     players: PlayerConfig[];
     smallBlind: number;
     bigBlind: number;

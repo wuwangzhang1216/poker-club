@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { LobbyConfig, PlayerConfig } from '../types';
 
 interface GameLobbyProps {
@@ -52,13 +52,6 @@ const JoinForm: React.FC<{ onJoin: (name: string, chips: number) => void }> = ({
 const GameLobby: React.FC<GameLobbyProps> = ({ lobbyConfig, onStartGame, onEndLobby, onLeaveLobby, onUpdateLobby, currentUserId, onSetCurrentUser }) => {
     const { players, smallBlind, bigBlind } = lobbyConfig;
     const [copyButtonText, setCopyButtonText] = useState('Copy');
-
-    const handleCopyLink = () => {
-        navigator.clipboard.writeText(window.location.href).then(() => {
-            setCopyButtonText('Copied!');
-            setTimeout(() => setCopyButtonText('Copy'), 2000);
-        });
-    };
     
     const isCurrentUserInLobby = useMemo(() => 
         players.some(p => p.id === currentUserId),
@@ -70,6 +63,28 @@ const GameLobby: React.FC<GameLobbyProps> = ({ lobbyConfig, onStartGame, onEndLo
         [players, currentUserId]
     );
 
+    useEffect(() => {
+        // This effect runs for the host to update the sharable URL with the latest lobby state.
+        if (isHost) {
+            try {
+                const encodedConfig = btoa(JSON.stringify(lobbyConfig));
+                const currentUrl = new URL(window.location.href);
+                currentUrl.hash = encodedConfig;
+                // Use replaceState to avoid cluttering browser history
+                window.history.replaceState(null, '', currentUrl.toString());
+            } catch (e) {
+                console.warn("Could not update URL with lobby state.", e);
+            }
+        }
+    }, [lobbyConfig, isHost]);
+
+    const handleCopyLink = () => {
+        navigator.clipboard.writeText(window.location.href).then(() => {
+            setCopyButtonText('Copied!');
+            setTimeout(() => setCopyButtonText('Copy'), 2000);
+        });
+    };
+    
     const handleJoinLobby = (name: string, chips: number) => {
         const newPlayer: PlayerConfig = {
             id: generateId(),
@@ -77,7 +92,6 @@ const GameLobby: React.FC<GameLobbyProps> = ({ lobbyConfig, onStartGame, onEndLo
             chips,
             isAI: false,
         };
-        // This would be an API call: POST /api/lobbies/:id/players
         const updatedLobby = { ...lobbyConfig, players: [...lobbyConfig.players, newPlayer] };
         onSetCurrentUser(newPlayer.id);
         onUpdateLobby(updatedLobby);
@@ -92,12 +106,10 @@ const GameLobby: React.FC<GameLobbyProps> = ({ lobbyConfig, onStartGame, onEndLo
             chips: 1000,
             isAI: true,
         };
-        // This would be an API call: POST /api/lobbies/:id/players (with isAI: true)
         onUpdateLobby({ ...lobbyConfig, players: [...lobbyConfig.players, newAI] });
     };
 
     const handleRemovePlayer = (id: string) => {
-        // This would be an API call: DELETE /api/lobbies/:id/players/:playerId
         onUpdateLobby({ ...lobbyConfig, players: players.filter(p => p.id !== id) });
     };
 

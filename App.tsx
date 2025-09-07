@@ -34,46 +34,46 @@ const App: React.FC = () => {
     const [currentUserId, setCurrentUserId] = useState<string | null>(null);
 
     useEffect(() => {
-        const userId = sessionStorage.getItem(CURRENT_USER_ID_KEY);
-        if (userId) {
-            setCurrentUserId(userId);
+        const userIdFromSession = sessionStorage.getItem(CURRENT_USER_ID_KEY);
+        if (userIdFromSession) {
+            setCurrentUserId(userIdFromSession);
         }
 
-        const fetchLobbyData = async (lobbyId: string) => {
-             const clearUrl = () => {
-                try {
-                    window.history.replaceState({}, '', window.location.pathname);
-                } catch (e) {
-                    console.warn("Could not clear URL: History API is not available in this environment.", e);
+        // Handle joining a lobby via a URL with encoded state in the hash
+        const hash = window.location.hash.substring(1);
+        if (hash) {
+            try {
+                const decodedLobby: LobbyConfig = JSON.parse(atob(hash));
+                if (decodedLobby && decodedLobby.players) {
+                    console.log("Joining lobby from URL hash data.");
+                    setLobbyConfig(decodedLobby);
+                    setAppStage('lobby');
+
+                    // Clean the hash from URL after loading
+                    try {
+                        const params = new URLSearchParams(window.location.search);
+                        const lobbyId = params.get('lobby');
+                        const cleanUrl = lobbyId ? `${window.location.pathname}?lobby=${lobbyId}` : window.location.pathname;
+                        window.history.replaceState(null, '', cleanUrl);
+                    } catch (e) {
+                        console.warn("Could not clean URL hash.", e);
+                    }
+                    return; // Stop further processing
                 }
-             };
-
-             try {
-                // This would be a call to your backend API
-                // const response = await fetch(`/api/lobbies/${lobbyId}`);
-                // if (!response.ok) throw new Error('Lobby not found');
-                // const parsedLobby: LobbyConfig = await response.json();
-                
-                // For demonstration without a real backend, we'll simulate a failure
-                // to show the "Create Game" screen if a lobby doesn't exist.
-                // In a real app, the fetch above would handle this.
-                console.warn("Simulating API call. In a real app, this would fetch from a server.");
-                clearUrl();
-                setAppStage('setup');
-                
             } catch (e) {
-                console.error("Failed to fetch lobby data", e);
-                clearUrl();
-                setAppStage('setup');
+                console.error("Could not parse lobby data from hash.", e);
+                 try { window.history.replaceState(null, '', window.location.pathname); } catch (err) {}
             }
-        };
-
+        }
+        
+        // If a lobby ID is present without hash data, it's a broken link. Default to setup.
         const params = new URLSearchParams(window.location.search);
         const lobbyId = params.get('lobby');
-        if (lobbyId) {
-            // We are simulating that the lobby doesn't exist on page load for now
-            // as we don't have a backend to fetch from.
-            fetchLobbyData(lobbyId);
+        if (lobbyId && !hash) {
+             console.warn("Lobby ID found in URL, but no lobby data. A host needs to provide a link with data. Showing setup screen.");
+             try {
+                window.history.replaceState({}, '', window.location.pathname);
+             } catch(e) { console.warn('Could not clear URL parameters.', e)}
         }
     }, []);
 
@@ -112,70 +112,10 @@ const App: React.FC = () => {
         setAppStage('playing');
     }, []);
 
-    useEffect(() => {
-        const params = new URLSearchParams(window.location.search);
-        const lobbyId = params.get('lobby');
-
-        if (appStage !== 'lobby' || !lobbyId) {
-            return;
-        }
-
-        let isMounted = true;
-        const pollLobby = async () => {
-            try {
-                // In a real app, this fetch would get the latest lobby state.
-                // const response = await fetch(`/api/lobbies/${lobbyId}`);
-                // if (!response.ok || !isMounted) return;
-                // const updatedLobby: LobbyConfig = await response.json();
-                
-                // We'll simulate receiving an update for demonstration purposes.
-                const updatedLobby = lobbyConfig; // Simulate no change by default
-                if (!updatedLobby || !isMounted) return;
-
-                if (updatedLobby.gameStarted) {
-                    initializeGame(updatedLobby);
-                    return; // Stop polling and transition to game
-                }
-                
-                const isStillInLobby = updatedLobby.players.some(p => p.id === currentUserId);
-                if (!isStillInLobby && lobbyConfig) { // check lobbyConfig to prevent firing on initial join
-                    console.log("You have been removed from the lobby.");
-                    setLobbyConfig(null);
-                    setAppStage('setup');
-                    try {
-                        window.history.replaceState({}, '', window.location.pathname);
-                    } catch (e) {
-                         console.warn("Could not update URL: History API is not available in this environment.", e);
-                    }
-                    return;
-                }
-
-                if (JSON.stringify(updatedLobby) !== JSON.stringify(lobbyConfig)) {
-                    setLobbyConfig(updatedLobby);
-                }
-            } catch (error) {
-                console.error("Failed to poll lobby state:", error);
-                 // If lobby is deleted, go back to setup
-                setLobbyConfig(null);
-                setAppStage('setup');
-                try {
-                    window.history.replaceState({}, '', window.location.pathname);
-                } catch (e) {
-                    console.warn("Could not update URL: History API is not available in this environment.", e);
-                }
-            }
-        };
-
-        const intervalId = setInterval(pollLobby, 2500);
-
-        return () => {
-            isMounted = false;
-            clearInterval(intervalId);
-        };
-    }, [appStage, lobbyConfig, currentUserId, initializeGame]);
-
     const handleCreateLobby = async (hostConfig: PlayerConfig, smallBlind: number, bigBlind: number) => {
+        const lobbyId = generateId(); 
         const newLobbyConfig: LobbyConfig = {
+            id: lobbyId,
             players: [
                 { ...hostConfig, isHost: true },
                 { id: generateId(), name: 'Gemini Agent 1', chips: 1000, isAI: true },
@@ -186,75 +126,36 @@ const App: React.FC = () => {
             gameStarted: false,
         };
         
+        console.log(`Simulating lobby creation with ID: ${lobbyId}`);
+        
+        sessionStorage.setItem(CURRENT_USER_ID_KEY, hostConfig.id);
         try {
-            // In a real app:
-            // const response = await fetch('/api/lobbies', {
-            //     method: 'POST',
-            //     headers: { 'Content-Type': 'application/json' },
-            //     body: JSON.stringify(newLobbyConfig),
-            // });
-            // const createdLobby = await response.json();
-            // const lobbyId = createdLobby.id;
-            
-            // For demonstration:
-            const lobbyId = generateId(); 
-            console.log(`Simulating lobby creation with ID: ${lobbyId}`);
-            
-            sessionStorage.setItem(CURRENT_USER_ID_KEY, hostConfig.id);
-            try {
-                window.history.pushState({}, '', `?lobby=${lobbyId}`);
-            } catch (e) {
-                console.warn("Could not update URL: History API is not available in this environment.", e);
-            }
-
-            setLobbyConfig(newLobbyConfig);
-            setCurrentUserId(hostConfig.id);
-            setAppStage('lobby');
-
-        } catch (error) {
-            console.error("Failed to create lobby:", error);
+            // Set the lobbyId in the query param for the host's URL
+            window.history.pushState({}, '', `?lobby=${lobbyId}`);
+        } catch (e) {
+            console.warn("Could not update URL: History API is not available in this environment.", e);
         }
+
+        setLobbyConfig(newLobbyConfig);
+        setCurrentUserId(hostConfig.id);
+        setAppStage('lobby');
     };
 
-    const handleUpdateLobby = async (updatedLobby: LobbyConfig) => {
-        const params = new URLSearchParams(window.location.search);
-        const lobbyId = params.get('lobby');
-        if (!lobbyId) return;
-
-        try {
-            // In a real app:
-            // await fetch(`/api/lobbies/${lobbyId}`, {
-            //     method: 'PUT',
-            //     headers: { 'Content-Type': 'application/json' },
-            //     body: JSON.stringify(updatedLobby),
-            // });
-             console.log("Simulating lobby update.");
-             setLobbyConfig(updatedLobby);
-        } catch(error) {
-             console.error("Failed to update lobby:", error);
-        }
+    const handleUpdateLobby = (updatedLobby: LobbyConfig) => {
+        // In a client-only model, this is the sole source of truth.
+        setLobbyConfig(updatedLobby);
     };
     
-    const handleStartGame = async () => {
+    const handleStartGame = () => {
         if (!lobbyConfig) return;
         const isHost = lobbyConfig.players.find(p => p.id === currentUserId)?.isHost ?? false;
 
-        if (isHost && !lobbyConfig.gameStarted) {
-             try {
-                // In a real app, this would be an API call to the server.
-                // The server would then update the lobby state.
-                // await fetch(`/api/lobbies/${lobbyId}/start`, { method: 'POST' });
-                console.log("Simulating start game API call.");
-                
-                const updatedLobby = { ...lobbyConfig, gameStarted: true };
-                
-                // For the host, directly initialize the game instead of relying on the polling mechanism,
-                // which can fail in sandboxed environments where the URL is not accessible.
-                initializeGame(updatedLobby);
-
-             } catch (error) {
-                 console.error("Failed to start game:", error);
-             }
+        if (isHost) {
+            const updatedLobby = { ...lobbyConfig, gameStarted: true };
+            // Host starts the game directly. Other players need a sync mechanism.
+            // In this backend-less version, other players will not see the game start.
+            // This is a known limitation.
+            initializeGame(updatedLobby);
         }
     };
     
@@ -315,58 +216,109 @@ const App: React.FC = () => {
         }, 5000);
     }, []);
 
-    const advanceToNextPhase = useCallback(() => {
-        setGameState(gs => {
-            if (!gs) return null;
-            
-            const players = gs.players.map(p => ({ ...p, bet: 0, action: null, hasActed: p.isFolded || p.chips === 0 }));
+    const runAllInShowdownSequence = useCallback(async (startingGs: GameState) => {
+        let deck = [...startingGs.deck];
+        let communityCards = [...startingGs.communityCards];
 
-            const activePlayers = players.filter(p => !p.isFolded && p.chips > 0);
-            if (activePlayers.length <= 1) {
-                handleShowdown(players, gs.pot, gs.communityCards);
-                return gs; 
+        const streetsToDeal = [];
+        if (communityCards.length < 3) streetsToDeal.push('flop');
+        if (communityCards.length < 4) streetsToDeal.push('turn');
+        if (communityCards.length < 5) streetsToDeal.push('river');
+
+        for (const street of streetsToDeal) {
+            await new Promise(resolve => setTimeout(resolve, 1200)); // Delay for suspense
+
+            if (street === 'flop') {
+                if (deck.length > 3) {
+                    deck.pop(); // burn
+                    communityCards.push(deck.pop()!, deck.pop()!, deck.pop()!);
+                }
+            } else { // turn or river
+                if (deck.length > 1) {
+                    deck.pop(); // burn
+                    communityCards.push(deck.pop()!);
+                }
             }
             
-            const newDeck = [...gs.deck];
-            let newCommunityCards = [...gs.communityCards];
-            let newGamePhase: GamePhase = gs.gamePhase;
-
-            switch (gs.gamePhase) {
-                case GamePhase.PRE_FLOP:
-                    if (newDeck.length >= 4) { newDeck.pop(); newCommunityCards.push(newDeck.pop()!, newDeck.pop()!, newDeck.pop()!); }
-                    newGamePhase = GamePhase.FLOP;
-                    playSound(SoundEffect.DEAL);
-                    break;
-                case GamePhase.FLOP:
-                case GamePhase.TURN:
-                    if (newDeck.length >= 2) { newDeck.pop(); newCommunityCards.push(newDeck.pop()!); }
-                    newGamePhase = gs.gamePhase === GamePhase.FLOP ? GamePhase.TURN : GamePhase.RIVER;
-                    playSound(SoundEffect.DEAL);
-                    break;
-                case GamePhase.RIVER:
-                    handleShowdown(players, gs.pot, gs.communityCards);
-                    return gs; 
-            }
+            playSound(SoundEffect.DEAL);
             
-            let firstToAct = (gs.dealerIndex + 1) % players.length;
-            while(players[firstToAct].isFolded || players[firstToAct].chips === 0) {
-                firstToAct = (firstToAct + 1) % players.length;
-            }
+            setGameState(gs => {
+                if (!gs) return null;
+                return {
+                    ...gs,
+                    deck: [...deck],
+                    communityCards: [...communityCards],
+                    gamePhase: GamePhase.SHOWDOWN, 
+                };
+            });
+        }
 
-            return {
-                ...gs,
-                gamePhase: newGamePhase,
-                players,
-                pot: gs.pot,
-                communityCards: newCommunityCards,
-                deck: newDeck,
-                currentPlayerIndex: firstToAct,
-                lastRaiserIndex: firstToAct,
-                currentBet: 0,
-                minRaise: gs.bigBlind,
-            };
-        });
+        await new Promise(resolve => setTimeout(resolve, 1500));
+        handleShowdown(startingGs.players, startingGs.pot, communityCards);
+
     }, [handleShowdown]);
+
+    const endBettingRoundAndAdvance = useCallback((currentGs: GameState) => {
+        if (!currentGs) return;
+        
+        const playersWithResetActions = currentGs.players.map(p => ({ ...p, bet: 0, action: null, hasActed: p.isFolded || p.chips === 0 }));
+        
+        const playersWhoCanBet = playersWithResetActions.filter(p => !p.isFolded && p.chips > 0);
+        const totalActivePlayers = playersWithResetActions.filter(p => !p.isFolded).length;
+
+        if (totalActivePlayers <= 1) {
+            handleShowdown(playersWithResetActions, currentGs.pot, currentGs.communityCards);
+            return;
+        }
+
+        if (playersWhoCanBet.length <= 1) {
+            const finalStateBeforeSequence = { ...currentGs, players: playersWithResetActions };
+            setGameState(finalStateBeforeSequence);
+            runAllInShowdownSequence(finalStateBeforeSequence);
+            return;
+        }
+        
+        if (currentGs.gamePhase === GamePhase.RIVER) {
+            handleShowdown(playersWithResetActions, currentGs.pot, currentGs.communityCards);
+            return;
+        }
+
+        const newDeck = [...currentGs.deck];
+        let newCommunityCards = [...currentGs.communityCards];
+        let newGamePhase: GamePhase = currentGs.gamePhase;
+
+        switch (currentGs.gamePhase) {
+            case GamePhase.PRE_FLOP:
+                if (newDeck.length >= 4) { newDeck.pop(); newCommunityCards.push(newDeck.pop()!, newDeck.pop()!, newDeck.pop()!); }
+                newGamePhase = GamePhase.FLOP;
+                playSound(SoundEffect.DEAL);
+                break;
+            case GamePhase.FLOP:
+            case GamePhase.TURN:
+                if (newDeck.length >= 2) { newDeck.pop(); newCommunityCards.push(newDeck.pop()!); }
+                newGamePhase = currentGs.gamePhase === GamePhase.FLOP ? GamePhase.TURN : GamePhase.RIVER;
+                playSound(SoundEffect.DEAL);
+                break;
+        }
+        
+        let firstToAct = (currentGs.dealerIndex + 1) % playersWithResetActions.length;
+        while(playersWithResetActions[firstToAct].isFolded || playersWithResetActions[firstToAct].chips === 0) {
+            firstToAct = (firstToAct + 1) % playersWithResetActions.length;
+        }
+
+        setGameState({
+            ...currentGs,
+            gamePhase: newGamePhase,
+            players: playersWithResetActions,
+            pot: currentGs.pot,
+            communityCards: newCommunityCards,
+            deck: newDeck,
+            currentPlayerIndex: firstToAct,
+            lastRaiserIndex: firstToAct,
+            currentBet: 0,
+            minRaise: currentGs.bigBlind,
+        });
+    }, [handleShowdown, runAllInShowdownSequence]);
     
     const startNewHand = useCallback(() => {
         setGameState(gs => {
@@ -443,7 +395,7 @@ const App: React.FC = () => {
         setGameState(gs => {
             if (!gs) return null;
     
-            let players = [...gs.players];
+            let players = JSON.parse(JSON.stringify(gs.players));
             const { currentPlayerIndex } = gs;
             let currentBet = gs.currentBet;
             let minRaise = gs.minRaise;
@@ -487,7 +439,7 @@ const App: React.FC = () => {
                     
                     if (isFullRaise) {
                         minRaise = raiseAmount;
-                        players = players.map((p, index) => {
+                        players = players.map((p: Player, index: number) => {
                             if (index !== currentPlayerIndex && !p.isFolded && p.chips > 0) {
                                 return { ...p, hasActed: false };
                             }
@@ -496,22 +448,24 @@ const App: React.FC = () => {
                     }
                     break;
             }
+            
+            const tempGs = { ...gs, players, currentBet, minRaise, pot: newPot };
     
-            const activePlayersLeft = players.filter(p => !p.isFolded).length;
+            const activePlayersLeft = players.filter((p:Player) => !p.isFolded).length;
             if (activePlayersLeft <= 1) {
                 setTimeout(() => handleShowdown(players, newPot, gs.communityCards), 1200);
-                return { ...gs, players, currentBet, minRaise, pot: newPot };
+                return tempGs;
             }
     
-            const activePlayers = players.filter(p => !p.isFolded);
-            const highestBet = Math.max(...activePlayers.map(p => p.bet));
+            const activePlayers = players.filter((p:Player) => !p.isFolded);
+            const highestBet = Math.max(...activePlayers.map((p:Player) => p.bet));
             
-            const allPlayersHaveActed = activePlayers.every(p => p.hasActed || p.chips === 0);
-            const allBetsAreSettled = activePlayers.every(p => p.bet === highestBet || p.chips === 0);
+            const allPlayersHaveActed = activePlayers.every((p:Player) => p.hasActed || p.chips === 0);
+            const allBetsAreSettled = activePlayers.every((p:Player) => p.bet === highestBet || p.chips === 0);
 
             if (allPlayersHaveActed && allBetsAreSettled) {
-                setTimeout(advanceToNextPhase, 1200);
-                return { ...gs, players, currentBet, minRaise, pot: newPot };
+                setTimeout(() => endBettingRoundAndAdvance(tempGs), 1200);
+                return tempGs;
             }
     
             let nextPlayerIndex = (currentPlayerIndex + 1) % players.length;
@@ -519,24 +473,12 @@ const App: React.FC = () => {
                 nextPlayerIndex = (nextPlayerIndex + 1) % players.length;
             }
     
-            return { ...gs, players, currentBet, minRaise, currentPlayerIndex: nextPlayerIndex, pot: newPot };
+            return { ...tempGs, currentPlayerIndex: nextPlayerIndex };
         });
-    }, [advanceToNextPhase, handleShowdown]);
+    }, [endBettingRoundAndAdvance, handleShowdown]);
 
-    const handleEndGame = async () => {
+    const handleEndGame = () => {
         setIsExitModalOpen(false);
-        const params = new URLSearchParams(window.location.search);
-        const lobbyId = params.get('lobby');
-        if (lobbyId) {
-             try {
-                // In a real app:
-                // await fetch(`/api/lobbies/${lobbyId}`, { method: 'DELETE' });
-                console.log("Simulating API call to delete lobby.");
-             } catch(e) {
-                console.error("Failed to delete lobby", e);
-             }
-        }
-        
         setIsGameOver(false);
         setGameState(null);
         setLobbyConfig(null);
@@ -550,30 +492,9 @@ const App: React.FC = () => {
         setAppStage('setup');
     };
 
-    const handleLeaveLobby = async () => {
-        if (!lobbyConfig || !currentUserId) return;
-        const params = new URLSearchParams(window.location.search);
-        const lobbyId = params.get('lobby');
-        if (lobbyId) {
-             try {
-                // In a real app:
-                // await fetch(`/api/lobbies/${lobbyId}/players/${currentUserId}`, { method: 'DELETE' });
-                console.log("Simulating API call to leave lobby.");
-             } catch(e) {
-                console.error("Failed to leave lobby", e);
-             }
-        }
-        
-        setGameState(null);
-        setLobbyConfig(null);
-        setWinners([]);
-        setWinningHand('');
-        try {
-            window.history.replaceState({}, '', window.location.pathname);
-        } catch (e) {
-            console.warn("Could not update URL", e);
-        }
-        setAppStage('setup');
+    const handleLeaveLobby = () => {
+        // In a client-only model, leaving is the same as resetting the app state.
+        handleEndGame();
     };
 
     const handleRequestExit = () => setIsExitModalOpen(true);
