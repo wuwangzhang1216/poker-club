@@ -1,0 +1,5 @@
+{
+  "name": "Gemini Poker Club",
+  "description": "A Texas Hold'em poker web application where you can play against AI opponents of varying difficulty, powered by Google's Gemini models. Experience a sleek, modern poker interface and test your skills against AI with distinct personalities.",
+  "requestFramePermissions": []
+}
