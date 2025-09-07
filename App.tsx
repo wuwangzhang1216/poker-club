@@ -1,6 +1,6 @@
 
 // Fix: Corrected the React import statement. The 'a,' was a typo causing import resolution to fail.
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { GameState, Player, Card, GamePhase, ActionType, HandEvaluation, PlayerStats, LobbyConfig, PlayerConfig } from './types';
 import { createDeck, shuffleDeck, dealCards, findBestHand, compareHands, getHandName, calculateWinProbabilities } from './services/pokerLogic';
 import { getAIAction } from './services/geminiService';
@@ -10,7 +10,6 @@ import GameLobby from './components/GameLobby';
 import WinnerModal from './components/WinnerModal';
 import GameOverModal from './components/GameOverModal';
 import ExitConfirmationModal from './components/ExitConfirmationModal';
-import TurnTransitionModal from './components/TurnTransitionModal';
 import ActionButtons from './components/ActionButtons';
 import playSound, { SoundEffect } from './services/audioService';
 
@@ -34,11 +33,6 @@ const App: React.FC = () => {
     const [isGameOver, setIsGameOver] = useState(false);
     const [isExitModalOpen, setIsExitModalOpen] = useState(false);
     const [currentUserId, setCurrentUserId] = useState<string | null>(null);
-    
-    // For hot-seat mode
-    const [turnConfirmation, setTurnConfirmation] = useState<{ show: boolean, player: Player | null }>({ show: false, player: null });
-    const [activeHumanPlayerId, setActiveHumanPlayerId] = useState<string | null>(null);
-
 
     useEffect(() => {
         // Check for existing user session
@@ -363,8 +357,6 @@ const App: React.FC = () => {
             
             setWinners([]);
             setWinningHand('');
-            setActiveHumanPlayerId(null);
-            setTurnConfirmation({ show: false, player: null });
 
             return {
                 ...gs,
@@ -550,12 +542,8 @@ const App: React.FC = () => {
 
     }, [gameState?.communityCards, gameState?.players, gameState?.gamePhase]);
 
-    const humanPlayerIds = useMemo(() => 
-        gameState?.players.filter(p => !p.isAI).map(p => p.id) ?? [], 
-    [gameState?.players]);
-
     useEffect(() => {
-        if (!gameState || appStage !== 'playing' || gameState.gamePhase === GamePhase.SHOWDOWN || gameState.gamePhase === GamePhase.SETUP || isGameOver || turnConfirmation.show) return;
+        if (!gameState || appStage !== 'playing' || gameState.gamePhase === GamePhase.SHOWDOWN || gameState.gamePhase === GamePhase.SETUP || isGameOver) return;
         
         const currentPlayer = gameState.players[gameState.currentPlayerIndex];
         if (!currentPlayer) return;
@@ -574,20 +562,8 @@ const App: React.FC = () => {
                 };
                 performAIAction();
             }
-        } else {
-             // Human player's turn
-            if (humanPlayerIds.length > 1 && activeHumanPlayerId !== currentPlayer.id) {
-                // If it's the first human player of the hand, don't show the modal, just set them as active
-                if (activeHumanPlayerId === null) {
-                    setActiveHumanPlayerId(currentPlayer.id);
-                } else {
-                    setTurnConfirmation({ show: true, player: currentPlayer });
-                }
-            } else if (activeHumanPlayerId === null) {
-                setActiveHumanPlayerId(currentPlayer.id);
-            }
         }
-    }, [gameState?.currentPlayerIndex, gameState?.gamePhase, isGameOver, appStage, handlePlayerAction, isThinking, turnConfirmation.show, humanPlayerIds, activeHumanPlayerId]);
+    }, [gameState?.currentPlayerIndex, gameState?.gamePhase, isGameOver, appStage, handlePlayerAction, isThinking]);
 
     useEffect(() => {
         if (gameState && gameState.gamePhase === GamePhase.SETUP) {
@@ -620,28 +596,15 @@ const App: React.FC = () => {
 
     if (appStage === 'playing' && gameState) {
         const currentPlayer = gameState.players[gameState.currentPlayerIndex];
-        const isHumanTurn = currentPlayer && !currentPlayer.isAI && !turnConfirmation.show;
+        const isMyTurn = currentPlayer && !currentPlayer.isAI && currentPlayer.id === currentUserId;
         const isGameActive = gameState.gamePhase !== GamePhase.SHOWDOWN && gameState.gamePhase !== GamePhase.SETUP;
 
-        const handleTurnConfirm = () => {
-            if (turnConfirmation.player) {
-                setActiveHumanPlayerId(turnConfirmation.player.id);
-                setTurnConfirmation({ show: false, player: null });
-            }
-        };
-        
         const getPlayerCardVisibility = (player: Player): boolean => {
-            if (player.isFolded && gameState.gamePhase !== GamePhase.SHOWDOWN) return false;
-            if (gameState.gamePhase === GamePhase.SHOWDOWN) return !player.isFolded;
-            if (player.isAI) return false;
-            
-            // For multi-human hot-seat, only show cards of the active human
-            if (humanPlayerIds.length > 1) {
-                return player.id === activeHumanPlayerId;
+            if (gameState.gamePhase === GamePhase.SHOWDOWN) {
+                return !player.isFolded;
             }
-            
-            // For single human player, always show their cards (unless modal is up for them)
-            return !(turnConfirmation.show && turnConfirmation.player?.id === player.id);
+            // A player can only see their own cards unless it's showdown
+            return player.id === currentUserId;
         };
 
         return (
@@ -660,7 +623,7 @@ const App: React.FC = () => {
                                 player={currentPlayer} 
                                 gameState={gameState} 
                                 onAction={handlePlayerAction}
-                                disabled={!isHumanTurn || isThinking}
+                                disabled={!isMyTurn || isThinking}
                             />
                         )}
                     </div>
@@ -668,9 +631,6 @@ const App: React.FC = () => {
                 {isGameOver && winners.length > 0 && <GameOverModal winner={winners[0]} onRestart={handleEndGame} />}
                 {!isGameOver && winners.length > 0 && <WinnerModal winners={winners} hand={winningHand} />}
                 {isExitModalOpen && <ExitConfirmationModal onConfirm={handleEndGame} onCancel={handleCancelExit} />}
-                {turnConfirmation.show && turnConfirmation.player && 
-                    <TurnTransitionModal playerName={turnConfirmation.player.name} onConfirm={handleTurnConfirm} />
-                }
             </div>
         );
     }
