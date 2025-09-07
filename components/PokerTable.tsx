@@ -11,6 +11,7 @@ interface PokerTableProps {
     playerStats: Record<string, PlayerStats>;
     isThinking: boolean;
     onRequestExit: () => void;
+    getPlayerCardVisibility: (player: PlayerType) => boolean;
 }
 
 // Arrange players evenly in a circle, starting from the bottom.
@@ -38,12 +39,11 @@ const getPlayerPositions = (numPlayers: number) => {
 };
 
 
-const PokerTable: React.FC<PokerTableProps> = ({ gameState, playerStats, isThinking, onRequestExit }) => {
+const PokerTable: React.FC<PokerTableProps> = ({ gameState, playerStats, isThinking, onRequestExit, getPlayerCardVisibility }) => {
     const { players, communityCards, pot, currentPlayerIndex, dealerIndex, smallBlindIndex, bigBlindIndex, gamePhase } = gameState;
     
     const currentPlayer = players[currentPlayerIndex];
     const playerPositions = getPlayerPositions(players.length);
-    const isShowdown = gamePhase === GamePhase.SHOWDOWN;
 
     const getPlayerAngles = (numPlayers: number): number[] => {
         const angles = [];
@@ -92,13 +92,12 @@ const PokerTable: React.FC<PokerTableProps> = ({ gameState, playerStats, isThink
             {/* Players */}
             {players.map((player, index) => {
                 const stats = playerStats[player.id];
-                const showCards = (isShowdown && !player.isFolded) || !player.isAI;
                 return (
                      <Player
                         key={player.id}
                         player={player}
                         stats={stats}
-                        showCards={showCards}
+                        showCards={getPlayerCardVisibility(player)}
                         isCurrent={index === currentPlayerIndex}
                         isDealer={index === dealerIndex}
                         isSmallBlind={index === smallBlindIndex}

@@ -1,25 +1,25 @@
-
-import React, { useState, useEffect, useCallback } from 'react';
-import { GameState, Player, Card, GamePhase, ActionType, HandEvaluation, PlayerStats } from './types';
+// Fix: Corrected the React import statement. The 'a,' was a typo causing import resolution to fail.
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { GameState, Player, Card, GamePhase, ActionType, HandEvaluation, PlayerStats, LobbyConfig, PlayerConfig } from './types';
 import { createDeck, shuffleDeck, dealCards, findBestHand, compareHands, getHandName, calculateWinProbabilities } from './services/pokerLogic';
 import { getAIAction } from './services/geminiService';
 import PokerTable from './components/PokerTable';
-import GameSetup, { PlayerConfig } from './components/GameSetup';
+import GameSetup from './components/GameSetup';
 import GameLobby from './components/GameLobby';
 import WinnerModal from './components/WinnerModal';
 import GameOverModal from './components/GameOverModal';
 import ExitConfirmationModal from './components/ExitConfirmationModal';
+import TurnTransitionModal from './components/TurnTransitionModal';
 import ActionButtons from './components/ActionButtons';
 import playSound, { SoundEffect } from './services/audioService';
 
 const AI_THINKING_TIME = 1500; // ms
+const CURRENT_USER_ID_KEY = 'gemini-poker-club-userId';
+const LOBBY_PREFIX = 'gemini-poker-lobby-';
 
 type AppStage = 'setup' | 'lobby' | 'playing';
-interface LobbyConfig {
-    players: PlayerConfig[];
-    smallBlind: number;
-    bigBlind: number;
-}
+
+const generateId = () => Math.random().toString(36).substring(2, 9);
 
 
 const App: React.FC = () => {
@@ -32,19 +32,85 @@ const App: React.FC = () => {
     const [winningHand, setWinningHand] = useState('');
     const [isGameOver, setIsGameOver] = useState(false);
     const [isExitModalOpen, setIsExitModalOpen] = useState(false);
+    const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+    
+    // For hot-seat mode
+    const [turnConfirmation, setTurnConfirmation] = useState<{ show: boolean, player: Player | null }>({ show: false, player: null });
+    const [activeHumanPlayerId, setActiveHumanPlayerId] = useState<string | null>(null);
 
-    const handleCreateLobby = (playerConfigs: PlayerConfig[], smallBlind: number, bigBlind: number) => {
-        setLobbyConfig({ players: playerConfigs, smallBlind, bigBlind });
+
+    useEffect(() => {
+        // Check for existing user session
+        const userId = sessionStorage.getItem(CURRENT_USER_ID_KEY);
+        if (userId) {
+            setCurrentUserId(userId);
+        }
+
+        // Check for lobby ID in URL
+        const params = new URLSearchParams(window.location.search);
+        const lobbyId = params.get('lobby');
+        if (lobbyId) {
+            const savedLobby = localStorage.getItem(`${LOBBY_PREFIX}${lobbyId}`);
+            if (savedLobby) {
+                try {
+                    const parsedLobby: LobbyConfig = JSON.parse(savedLobby);
+                    setLobbyConfig(parsedLobby);
+                    setAppStage('lobby');
+                } catch (e) {
+                    console.error("Failed to parse lobby data from localStorage", e);
+                    try {
+                        window.history.replaceState({}, '', window.location.pathname); // Clear invalid URL
+                    } catch (err) {
+                        console.warn("Could not update URL: History API is not available in this environment.", err);
+                    }
+                }
+            }
+        }
+    }, []);
+
+    const handleCreateLobby = (hostConfig: PlayerConfig, smallBlind: number, bigBlind: number) => {
+        const lobbyId = generateId();
+        const newLobbyConfig: LobbyConfig = {
+            players: [
+                { ...hostConfig, isHost: true },
+                { id: generateId(), name: 'Gemini Agent 1', chips: 1000, isAI: true },
+                { id: generateId(), name: 'Gemini Agent 2', chips: 1000, isAI: true },
+            ],
+            smallBlind,
+            bigBlind,
+        };
+        
+        localStorage.setItem(`${LOBBY_PREFIX}${lobbyId}`, JSON.stringify(newLobbyConfig));
+        sessionStorage.setItem(CURRENT_USER_ID_KEY, hostConfig.id);
+        
+        try {
+            window.history.pushState({}, '', `?lobby=${lobbyId}`);
+        } catch (e) {
+            console.warn("Could not update URL: History API is not available in this environment.", e);
+        }
+
+        setLobbyConfig(newLobbyConfig);
+        setCurrentUserId(hostConfig.id);
         setAppStage('lobby');
     };
+    
+    const updateLobby = useCallback((updatedLobby: LobbyConfig) => {
+        const params = new URLSearchParams(window.location.search);
+        const lobbyId = params.get('lobby');
+        if (lobbyId) {
+            localStorage.setItem(`${LOBBY_PREFIX}${lobbyId}`, JSON.stringify(updatedLobby));
+            setLobbyConfig(updatedLobby);
+        }
+    }, []);
 
     const startGame = useCallback(() => {
         if (!lobbyConfig) return;
         
-        const newPlayers: Player[] = lobbyConfig.players.map((config, i) => ({
-            id: `player-${i}-${Date.now()}`,
+        const newPlayers: Player[] = lobbyConfig.players.map(config => ({
+            id: config.id,
             name: config.name,
             chips: config.chips,
+            isHost: config.isHost,
             hand: [],
             isAI: config.isAI,
             isFolded: false,
@@ -53,6 +119,7 @@ const App: React.FC = () => {
             action: null,
             hasActed: false,
         }));
+
         setGameState({
             players: newPlayers,
             deck: [],
@@ -134,8 +201,6 @@ const App: React.FC = () => {
         setGameState(gs => {
             if (!gs) return null;
             
-            // The pot is already up-to-date from handlePlayerAction.
-            // We just need to reset player bets for the new round.
             const players = gs.players.map(p => ({ ...p, bet: 0, action: null, hasActed: p.isFolded || p.chips === 0 }));
 
             const activePlayers = players.filter(p => !p.isFolded && p.chips > 0);
@@ -174,7 +239,7 @@ const App: React.FC = () => {
                 ...gs,
                 gamePhase: newGamePhase,
                 players,
-                pot: gs.pot, // Pot is already correct
+                pot: gs.pot,
                 communityCards: newCommunityCards,
                 deck: newDeck,
                 currentPlayerIndex: firstToAct,
@@ -194,7 +259,7 @@ const App: React.FC = () => {
                 setWinners(players);
                 setWinningHand("by winning all the chips!");
                 setIsGameOver(true);
-                return { ...gs, gamePhase: GamePhase.SHOWDOWN }; // Stop the game loop
+                return { ...gs, gamePhase: GamePhase.SHOWDOWN };
             }
 
             const deck = shuffleDeck(createDeck());
@@ -237,6 +302,8 @@ const App: React.FC = () => {
             
             setWinners([]);
             setWinningHand('');
+            setActiveHumanPlayerId(null);
+            setTurnConfirmation({ show: false, player: null });
 
             return {
                 ...gs,
@@ -347,16 +414,21 @@ const App: React.FC = () => {
         setLobbyConfig(null);
         setWinners([]);
         setWinningHand('');
+        const params = new URLSearchParams(window.location.search);
+        const lobbyId = params.get('lobby');
+        if (lobbyId) {
+             localStorage.removeItem(`${LOBBY_PREFIX}${lobbyId}`);
+        }
+        try {
+            window.history.replaceState({}, '', window.location.pathname);
+        } catch (e) {
+            console.warn("Could not update URL: History API is not available in this environment.", e);
+        }
         setAppStage('setup');
     };
 
-    const handleRequestExit = () => {
-        setIsExitModalOpen(true);
-    };
-
-    const handleCancelExit = () => {
-        setIsExitModalOpen(false);
-    };
+    const handleRequestExit = () => setIsExitModalOpen(true);
+    const handleCancelExit = () => setIsExitModalOpen(false);
     
     useEffect(() => {
         if (!gameState || gameState.gamePhase === GamePhase.SETUP || gameState.gamePhase === GamePhase.SHOWDOWN) {
@@ -393,9 +465,12 @@ const App: React.FC = () => {
 
     }, [gameState?.communityCards, gameState?.players, gameState?.gamePhase]);
 
+    const humanPlayerIds = useMemo(() => 
+        gameState?.players.filter(p => !p.isAI).map(p => p.id) ?? [], 
+    [gameState?.players]);
 
     useEffect(() => {
-        if (!gameState || appStage !== 'playing' || gameState.gamePhase === GamePhase.SHOWDOWN || gameState.gamePhase === GamePhase.SETUP || isGameOver) return;
+        if (!gameState || appStage !== 'playing' || gameState.gamePhase === GamePhase.SHOWDOWN || gameState.gamePhase === GamePhase.SETUP || isGameOver || turnConfirmation.show) return;
         
         const currentPlayer = gameState.players[gameState.currentPlayerIndex];
         if (!currentPlayer) return;
@@ -414,8 +489,20 @@ const App: React.FC = () => {
                 };
                 performAIAction();
             }
+        } else {
+             // Human player's turn
+            if (humanPlayerIds.length > 1 && activeHumanPlayerId !== currentPlayer.id) {
+                // If it's the first human player of the hand, don't show the modal, just set them as active
+                if (activeHumanPlayerId === null) {
+                    setActiveHumanPlayerId(currentPlayer.id);
+                } else {
+                    setTurnConfirmation({ show: true, player: currentPlayer });
+                }
+            } else if (activeHumanPlayerId === null) {
+                setActiveHumanPlayerId(currentPlayer.id);
+            }
         }
-    }, [gameState?.currentPlayerIndex, gameState?.gamePhase, isGameOver, appStage, handlePlayerAction, isThinking]);
+    }, [gameState?.currentPlayerIndex, gameState?.gamePhase, isGameOver, appStage, handlePlayerAction, isThinking, turnConfirmation.show, humanPlayerIds, activeHumanPlayerId]);
 
     useEffect(() => {
         if (gameState && gameState.gamePhase === GamePhase.SETUP) {
@@ -424,8 +511,7 @@ const App: React.FC = () => {
     }, [gameState?.gamePhase, startNewHand]);
     
     const handleBackToSetup = () => {
-        setLobbyConfig(null);
-        setAppStage('setup');
+        handleEndGame();
     };
 
     if (appStage === 'setup') {
@@ -433,13 +519,44 @@ const App: React.FC = () => {
     }
     
     if (appStage === 'lobby' && lobbyConfig) {
-        return <GameLobby lobbyConfig={lobbyConfig} onStartGame={startGame} onBackToSetup={handleBackToSetup} />;
+        return <GameLobby 
+            lobbyConfig={lobbyConfig} 
+            onStartGame={startGame} 
+            onBackToSetup={handleBackToSetup} 
+            onUpdateLobby={updateLobby}
+            currentUserId={currentUserId}
+            onSetCurrentUser={(id) => {
+                setCurrentUserId(id);
+                sessionStorage.setItem(CURRENT_USER_ID_KEY, id);
+            }}
+        />;
     }
 
     if (appStage === 'playing' && gameState) {
         const currentPlayer = gameState.players[gameState.currentPlayerIndex];
-        const isHumanTurn = currentPlayer && !currentPlayer.isAI;
+        const isHumanTurn = currentPlayer && !currentPlayer.isAI && !turnConfirmation.show;
         const isGameActive = gameState.gamePhase !== GamePhase.SHOWDOWN && gameState.gamePhase !== GamePhase.SETUP;
+
+        const handleTurnConfirm = () => {
+            if (turnConfirmation.player) {
+                setActiveHumanPlayerId(turnConfirmation.player.id);
+                setTurnConfirmation({ show: false, player: null });
+            }
+        };
+        
+        const getPlayerCardVisibility = (player: Player): boolean => {
+            if (player.isFolded && gameState.gamePhase !== GamePhase.SHOWDOWN) return false;
+            if (gameState.gamePhase === GamePhase.SHOWDOWN) return !player.isFolded;
+            if (player.isAI) return false;
+            
+            // For multi-human hot-seat, only show cards of the active human
+            if (humanPlayerIds.length > 1) {
+                return player.id === activeHumanPlayerId;
+            }
+            
+            // For single human player, always show their cards (unless modal is up for them)
+            return !(turnConfirmation.show && turnConfirmation.player?.id === player.id);
+        };
 
         return (
             <div className="bg-[#0A0A0A] min-h-screen w-full flex flex-col items-center justify-center font-sans text-white p-4 overflow-hidden">
@@ -449,6 +566,7 @@ const App: React.FC = () => {
                         playerStats={playerStats}
                         isThinking={isThinking}
                         onRequestExit={handleRequestExit} 
+                        getPlayerCardVisibility={getPlayerCardVisibility}
                     />
                     <div className="relative z-20 mt-6 h-[170px] flex items-center justify-center">
                         {isGameActive && currentPlayer && (
@@ -464,6 +582,9 @@ const App: React.FC = () => {
                 {isGameOver && winners.length > 0 && <GameOverModal winner={winners[0]} onRestart={handleEndGame} />}
                 {!isGameOver && winners.length > 0 && <WinnerModal winners={winners} hand={winningHand} />}
                 {isExitModalOpen && <ExitConfirmationModal onConfirm={handleEndGame} onCancel={handleCancelExit} />}
+                {turnConfirmation.show && turnConfirmation.player && 
+                    <TurnTransitionModal playerName={turnConfirmation.player.name} onConfirm={handleTurnConfirm} />
+                }
             </div>
         );
     }

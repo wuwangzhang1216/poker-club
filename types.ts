@@ -34,6 +34,21 @@ export enum ActionType {
     RAISE = 'RAISE',
 }
 
+export interface PlayerConfig {
+    id: string;
+    name: string;
+    chips: number;
+    isAI: boolean;
+    isHost?: boolean;
+}
+
+export interface LobbyConfig {
+    players: PlayerConfig[];
+    smallBlind: number;
+    bigBlind: number;
+}
+
+
 export interface Player {
     id: string;
     name: string;
@@ -45,6 +60,7 @@ export interface Player {
     totalBet: number; // Total bet in the hand
     action: ActionType | null;
     hasActed: boolean; // Has the player acted in the current betting round?
+    isHost?: boolean;
 }
 
 export enum GamePhase {
