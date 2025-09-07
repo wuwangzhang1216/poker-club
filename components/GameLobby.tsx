@@ -1,3 +1,4 @@
+
 import React, { useState, useMemo } from 'react';
 import { LobbyConfig, PlayerConfig } from '../types';
 
@@ -5,6 +6,7 @@ interface GameLobbyProps {
     lobbyConfig: LobbyConfig;
     onStartGame: () => void;
     onBackToSetup: () => void;
+    onLeaveLobby: () => void;
     onUpdateLobby: (updatedLobby: LobbyConfig) => void;
     currentUserId: string | null;
     onSetCurrentUser: (id: string) => void;
@@ -48,7 +50,7 @@ const JoinForm: React.FC<{ onJoin: (name: string, chips: number) => void }> = ({
 };
 
 
-const GameLobby: React.FC<GameLobbyProps> = ({ lobbyConfig, onStartGame, onBackToSetup, onUpdateLobby, currentUserId, onSetCurrentUser }) => {
+const GameLobby: React.FC<GameLobbyProps> = ({ lobbyConfig, onStartGame, onBackToSetup, onLeaveLobby, onUpdateLobby, currentUserId, onSetCurrentUser }) => {
     const { players, smallBlind, bigBlind } = lobbyConfig;
     const [copyButtonText, setCopyButtonText] = useState('Copy');
 
@@ -145,7 +147,9 @@ const GameLobby: React.FC<GameLobbyProps> = ({ lobbyConfig, onStartGame, onBackT
                 </div>
                 
                 <div className="flex space-x-4 pt-4">
-                    <button onClick={onBackToSetup} className="w-full py-3 text-xl action-button secondary">Exit Lobby</button>
+                    <button onClick={isHost ? onBackToSetup : onLeaveLobby} className="w-full py-3 text-xl action-button secondary">
+                        {isHost ? 'Exit Lobby' : 'Leave Lobby'}
+                    </button>
                     {isHost ? (
                         <button onClick={onStartGame} disabled={players.length < 2} className="w-full py-3 text-xl action-button primary disabled:opacity-50">Start Game</button>
                     ) : (

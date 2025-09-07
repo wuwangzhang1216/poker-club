@@ -1,3 +1,4 @@
+
 export enum Suit {
     HEARTS = '♥',
     DIAMONDS = '♦',
@@ -46,6 +47,7 @@ export interface LobbyConfig {
     players: PlayerConfig[];
     smallBlind: number;
     bigBlind: number;
+    gameStarted?: boolean;
 }
 
 

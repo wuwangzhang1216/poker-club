@@ -1,3 +1,4 @@
+
 // Fix: Corrected the React import statement. The 'a,' was a typo causing import resolution to fail.
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { GameState, Player, Card, GamePhase, ActionType, HandEvaluation, PlayerStats, LobbyConfig, PlayerConfig } from './types';
@@ -78,6 +79,7 @@ const App: React.FC = () => {
             ],
             smallBlind,
             bigBlind,
+            gameStarted: false,
         };
         
         localStorage.setItem(`${LOBBY_PREFIX}${lobbyId}`, JSON.stringify(newLobbyConfig));
@@ -105,6 +107,12 @@ const App: React.FC = () => {
 
     const startGame = useCallback(() => {
         if (!lobbyConfig) return;
+
+        const isHost = lobbyConfig.players.find(p => p.id === currentUserId)?.isHost ?? false;
+        if (isHost && !lobbyConfig.gameStarted) {
+            const updatedLobby = { ...lobbyConfig, gameStarted: true };
+            updateLobby(updatedLobby);
+        }
         
         const newPlayers: Player[] = lobbyConfig.players.map(config => ({
             id: config.id,
@@ -138,7 +146,60 @@ const App: React.FC = () => {
         });
         setIsGameOver(false);
         setAppStage('playing');
-    }, [lobbyConfig]);
+    }, [lobbyConfig, currentUserId, updateLobby]);
+    
+    useEffect(() => {
+        const handleStorageChange = (event: StorageEvent) => {
+            if (!event.key?.startsWith(LOBBY_PREFIX)) return;
+
+            const params = new URLSearchParams(window.location.search);
+            const lobbyId = params.get('lobby');
+            if (!lobbyId || event.key !== `${LOBBY_PREFIX}${lobbyId}`) return;
+
+            if (event.newValue === null) {
+                if (appStage !== 'setup') {
+                    console.log("Lobby closed by host. Returning to setup.");
+                    setGameState(null);
+                    setLobbyConfig(null);
+                    setWinners([]);
+                    setWinningHand('');
+                    try {
+                        window.history.replaceState({}, '', window.location.pathname);
+                    } catch (e) { console.warn("Could not update URL", e); }
+                    setAppStage('setup');
+                }
+                return;
+            }
+
+            try {
+                const updatedLobby: LobbyConfig = JSON.parse(event.newValue);
+                const isStillInLobby = updatedLobby.players.some(p => p.id === currentUserId);
+                
+                if (!isStillInLobby && appStage === 'lobby') {
+                    console.log("You have been removed from the lobby.");
+                    setLobbyConfig(null);
+                     try {
+                        window.history.replaceState({}, '', window.location.pathname);
+                    } catch (e) { console.warn("Could not update URL", e); }
+                    setAppStage('setup');
+                    return;
+                }
+
+                setLobbyConfig(updatedLobby);
+
+                if (updatedLobby.gameStarted && appStage === 'lobby') {
+                    startGame();
+                }
+            } catch (e) {
+                console.error("Failed to parse lobby update from storage", e);
+            }
+        };
+
+        window.addEventListener('storage', handleStorageChange);
+        return () => {
+            window.removeEventListener('storage', handleStorageChange);
+        };
+    }, [appStage, startGame, currentUserId]);
 
     const handleShowdown = useCallback((players: Player[], pot: number, communityCards: Card[]) => {
         const playersWithResetBets = players.map(p => ({ ...p, bet: 0 }));
@@ -427,6 +488,30 @@ const App: React.FC = () => {
         setAppStage('setup');
     };
 
+    const handleLeaveLobby = useCallback(() => {
+        if (!lobbyConfig || !currentUserId) return;
+
+        const params = new URLSearchParams(window.location.search);
+        const lobbyId = params.get('lobby');
+
+        if (lobbyId) {
+            const updatedPlayers = lobbyConfig.players.filter(p => p.id !== currentUserId);
+            const updatedLobbyForStorage = { ...lobbyConfig, players: updatedPlayers };
+            localStorage.setItem(`${LOBBY_PREFIX}${lobbyId}`, JSON.stringify(updatedLobbyForStorage));
+        }
+
+        setGameState(null);
+        setLobbyConfig(null);
+        setWinners([]);
+        setWinningHand('');
+        try {
+            window.history.replaceState({}, '', window.location.pathname);
+        } catch (e) {
+            console.warn("Could not update URL", e);
+        }
+        setAppStage('setup');
+    }, [lobbyConfig, currentUserId]);
+
     const handleRequestExit = () => setIsExitModalOpen(true);
     const handleCancelExit = () => setIsExitModalOpen(false);
     
@@ -523,6 +608,7 @@ const App: React.FC = () => {
             lobbyConfig={lobbyConfig} 
             onStartGame={startGame} 
             onBackToSetup={handleBackToSetup} 
+            onLeaveLobby={handleLeaveLobby}
             onUpdateLobby={updateLobby}
             currentUserId={currentUserId}
             onSetCurrentUser={(id) => {
