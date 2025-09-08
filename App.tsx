@@ -108,15 +108,23 @@ const App: React.FC = () => {
 
     const handleCreateLobby = async (hostConfig: PlayerConfig, smallBlind: number, bigBlind: number) => {
         try {
-            const { lobby_id, host } = await api.createLobby(hostConfig, smallBlind, bigBlind);
+            const newLobby = await api.createLobby(hostConfig, smallBlind, bigBlind);
+            
+            const newLobbyId = newLobby.id;
+            const host = newLobby.players.find(p => p.isHost);
+
+            if (!newLobbyId || !host) {
+                throw new Error("Invalid lobby data received from server.");
+            }
             const newUserId = host.id;
             
             sessionStorage.setItem(CURRENT_USER_ID_KEY, newUserId);
             setCurrentUserId(newUserId);
-            setLobbyId(lobby_id);
-            window.history.pushState({}, '', `?lobby=${lobby_id}`);
+            setLobbyId(newLobbyId);
+            setLobbyConfig(newLobby);
+            window.history.pushState({}, '', `?lobby=${newLobbyId}`);
             
-            connectWebSocket(lobby_id, newUserId);
+            connectWebSocket(newLobbyId, newUserId);
             setAppStage('lobby');
         } catch (error) {
             console.error("Failed to create lobby:", error);

@@ -39,7 +39,7 @@ async function apiRequest<T>(endpoint: string, options: RequestInit = {}): Promi
 }
 
 export const createLobby = (hostConfig: PlayerConfig, smallBlind: number, bigBlind: number) => {
-    return apiRequest<{ lobby_id: string; host: PlayerConfig }>('/lobby/create', {
+    return apiRequest<LobbyConfig>('/lobby/create', {
         method: 'POST',
         body: JSON.stringify({
             hostConfig: hostConfig,
