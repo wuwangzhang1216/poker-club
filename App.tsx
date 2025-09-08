@@ -8,6 +8,7 @@ import WinnerModal from './components/WinnerModal';
 import GameOverModal from './components/GameOverModal';
 import ExitConfirmationModal from './components/ExitConfirmationModal';
 import ActionButtons from './components/ActionButtons';
+import TurnTransitionModal from './components/TurnTransitionModal';
 import playSound, { SoundEffect } from './services/audioService';
 
 const CURRENT_USER_ID_KEY = 'gemini-poker-club-userId';
@@ -25,6 +26,7 @@ const App: React.FC = () => {
     const [isGameOver, setIsGameOver] = useState(false);
     const [isExitModalOpen, setIsExitModalOpen] = useState(false);
     const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+    const [isTurnAcknowledged, setIsTurnAcknowledged] = useState(false);
     const ws = useRef<WebSocket | null>(null);
     const prevGameState = useRef<GameState | null>(null);
 
@@ -58,6 +60,11 @@ const App: React.FC = () => {
         const foldedPlayer = gameState.players.find((p, i) => p.isFolded && !prevGameState.current?.players[i]?.isFolded);
         if (foldedPlayer) playSound(SoundEffect.FOLD);
         
+        // When the current player changes, reset the acknowledgement flag.
+        if (gameState.currentPlayerIndex !== prevGameState.current.currentPlayerIndex) {
+            setIsTurnAcknowledged(false);
+        }
+
         prevGameState.current = gameState;
     }, [gameState]);
 
@@ -79,6 +86,7 @@ const App: React.FC = () => {
                 setLobbyConfig(data.lobby);
             } else if (data.type === 'GAME_START') {
                 setGameState(data.game_state);
+                setIsTurnAcknowledged(false); // Ensure modal shows for first player
                 setAppStage('playing');
                 playSound(SoundEffect.SHUFFLE);
             } else if (data.type === 'GAME_STATE_UPDATE') {
@@ -202,12 +210,18 @@ const App: React.FC = () => {
         const currentPlayer = gameState.players[gameState.currentPlayerIndex];
         const isMyTurn = currentPlayer && !currentPlayer.isAI && currentPlayer.id === currentUserId;
         const isGameActive = gameState.gamePhase !== GamePhase.SHOWDOWN && gameState.gamePhase !== GamePhase.SETUP;
+        const showTurnModal = isMyTurn && !isTurnAcknowledged && isGameActive;
 
         const getPlayerCardVisibility = (player: Player): boolean => {
             if (gameState.gamePhase === GamePhase.SHOWDOWN) {
                 return !player.isFolded;
             }
-            return player.id === currentUserId;
+            // For pass-and-play, only show cards if it is that player's turn and they have acknowledged it.
+            const isThisPlayersTurn = player.id === currentPlayer?.id;
+            if (isThisPlayersTurn && !player.isAI) {
+                return isTurnAcknowledged;
+            }
+            return false;
         };
 
         return (
@@ -226,11 +240,20 @@ const App: React.FC = () => {
                                 player={currentPlayer} 
                                 gameState={gameState} 
                                 onAction={handlePlayerAction}
-                                disabled={!isMyTurn || isThinking}
+                                disabled={!isMyTurn || isThinking || showTurnModal}
                             />
                         )}
                     </div>
                 </div>
+                {showTurnModal && (
+                    <TurnTransitionModal 
+                        playerName={currentPlayer.name} 
+                        onConfirm={() => {
+                            setIsTurnAcknowledged(true);
+                            playSound(SoundEffect.DEAL); // Sound for revealing your cards
+                        }} 
+                    />
+                )}
                 {isGameOver && winners.length > 0 && <GameOverModal winner={winners[0]} onRestart={handleEndGame} />}
                 {!isGameOver && winners.length > 0 && <WinnerModal winners={winners} hand={winningHand} />}
                 {isExitModalOpen && <ExitConfirmationModal onConfirm={handleEndGame} onCancel={handleCancelExit} />}
