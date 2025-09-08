@@ -67,7 +67,8 @@ const App: React.FC = () => {
             return;
         }
         const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsUrl = `${wsProtocol}//${window.location.host}/ws/${lId}/${pId}`;
+        const wsHost = 'localhost:8000'; // Target the backend server directly
+        const wsUrl = `${wsProtocol}//${wsHost}/ws/${lId}/${pId}`;
         
         ws.current = new WebSocket(wsUrl);
 
