@@ -1,7 +1,7 @@
 import { ActionType, LobbyConfig, PlayerConfig } from './types';
 
 // Assumes the backend API is served from the same origin under /api
-const API_BASE_URL = '/api';
+const API_BASE_URL = 'http://localhost:8000/api';
 
 async function handleResponse<T>(response: Response): Promise<T> {
     if (!response.ok) {
