@@ -6,11 +6,25 @@ const API_BASE_URL = 'http://localhost:8000/api';
 async function handleResponse<T>(response: Response): Promise<T> {
     if (!response.ok) {
         const errorData = await response.json().catch(() => ({ message: 'An unknown error occurred' }));
-        console.error('API Error:', errorData);
-        throw new Error(errorData.detail || errorData.message || `HTTP error! status: ${response.status}`);
+        console.error('API Error:', JSON.stringify(errorData, null, 2));
+
+        let errorMessage = `HTTP error! status: ${response.status}`;
+        if (errorData.detail) {
+            // FastAPI validation errors are often in an array of objects
+            if (Array.isArray(errorData.detail)) {
+                errorMessage = errorData.detail.map((err: any) => `${err.loc.join(' -> ')}: ${err.msg}`).join(', ');
+            } else {
+                errorMessage = String(errorData.detail);
+            }
+        } else if (errorData.message) {
+            errorMessage = errorData.message;
+        }
+
+        throw new Error(errorMessage);
     }
     return response.json() as Promise<T>;
 }
+
 
 async function apiRequest<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
     const url = `${API_BASE_URL}${endpoint}`;
@@ -28,8 +42,7 @@ export const createLobby = (hostConfig: PlayerConfig, smallBlind: number, bigBli
     return apiRequest<{ lobby_id: string; host: PlayerConfig }>('/lobby/create', {
         method: 'POST',
         body: JSON.stringify({
-            host_name: hostConfig.name,
-            host_chips: hostConfig.chips,
+            hostConfig: hostConfig,
             small_blind: smallBlind,
             big_blind: bigBlind,
         }),
