@@ -1,267 +1,257 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { GameState, Player, Card, GamePhase, ActionType, PlayerStats, LobbyConfig, PlayerConfig } from './types';
-import * as api from './services/apiService';
+import { GameState, Player, Card, GamePhase, ActionType, PlayerStats, PlayerConfig, AIDifficulty } from './types';
+import * as pokerLogic from './services/pokerLogic';
+import * as geminiService from './services/geminiService';
 import PokerTable from './components/PokerTable';
 import GameSetup from './components/GameSetup';
-import GameLobby from './components/GameLobby';
-import WinnerModal from './components/WinnerModal';
 import GameOverModal from './components/GameOverModal';
 import ExitConfirmationModal from './components/ExitConfirmationModal';
 import ActionButtons from './components/ActionButtons';
-import TurnTransitionModal from './components/TurnTransitionModal';
-import playSound, { SoundEffect } from './services/audioService';
-
-const CURRENT_USER_ID_KEY = 'gemini-poker-club-userId';
-
-type AppStage = 'setup' | 'lobby' | 'playing';
+import audioService, { SoundEffect } from './services/audioService';
 
 const App: React.FC = () => {
-    const [appStage, setAppStage] = useState<AppStage>('setup');
-    const [lobbyId, setLobbyId] = useState<string | null>(null);
-    const [lobbyConfig, setLobbyConfig] = useState<LobbyConfig | null>(null);
     const [gameState, setGameState] = useState<GameState | null>(null);
     const [isThinking, setIsThinking] = useState(false);
     const [winners, setWinners] = useState<Player[]>([]);
     const [winningHand, setWinningHand] = useState('');
     const [isGameOver, setIsGameOver] = useState(false);
     const [isExitModalOpen, setIsExitModalOpen] = useState(false);
-    const [currentUserId, setCurrentUserId] = useState<string | null>(null);
-    const [isTurnAcknowledged, setIsTurnAcknowledged] = useState(false);
-    const ws = useRef<WebSocket | null>(null);
+    const [playerStats, setPlayerStats] = useState<Record<string, PlayerStats>>({});
     const prevGameState = useRef<GameState | null>(null);
+    const humanPlayerId = useRef<string | null>(null);
+    const isGameActive = useRef(false); // New ref to track game status
 
     useEffect(() => {
-        setCurrentUserId(sessionStorage.getItem(CURRENT_USER_ID_KEY));
-        const params = new URLSearchParams(window.location.search);
-        const lobbyIdFromUrl = params.get('lobby');
+        // Preload sounds when the app first mounts
+        audioService.loadSounds();
+    }, []);
 
-        if (lobbyIdFromUrl) {
-            setLobbyId(lobbyIdFromUrl);
-            api.getLobby(lobbyIdFromUrl)
-                .then(config => {
-                    setLobbyConfig(config);
-                    setAppStage('lobby');
-                })
-                .catch(err => {
-                    console.error("Failed to fetch lobby, returning to setup.", err);
-                    window.history.replaceState({}, '', window.location.pathname);
-                });
+    const handleAITurn = useCallback(async (state: GameState) => {
+        const currentPlayer = state.players[state.currentPlayerIndex];
+        if (!currentPlayer || !currentPlayer.isAI || currentPlayer.isFolded || currentPlayer.chips === 0) {
+            return;
+        }
+
+        setIsThinking(true);
+        // Add a small delay for more natural pacing
+        await new Promise(resolve => setTimeout(resolve, 1500 + Math.random() * 1000));
+        
+        // Abort AI action if the game has been exited during the delay
+        if (!isGameActive.current) {
+            setIsThinking(false);
+            return;
+        }
+
+        try {
+            const { action, amount } = await geminiService.getAIPlayerAction(state, currentPlayer);
+            const newState = pokerLogic.handlePlayerAction(state, currentPlayer.id, action, amount);
+            if (isGameActive.current) { // Check again before setting state
+                setGameState(newState);
+            }
+        } catch (error) {
+            console.error("Error getting AI action, AI will check or fold.", error);
+            // Fallback action if API fails
+            const fallbackAction = state.currentBet > currentPlayer.bet ? ActionType.FOLD : ActionType.CHECK;
+            const newState = pokerLogic.handlePlayerAction(state, currentPlayer.id, fallbackAction, 0);
+            if (isGameActive.current) { // Check again before setting state
+                setGameState(newState);
+            }
+        } finally {
+            if (isGameActive.current) { // Only update if game is still active
+                setIsThinking(false);
+            }
         }
     }, []);
     
     useEffect(() => {
-        // Sound effect logic based on state changes
-        if (!gameState || !prevGameState.current) {
+        if (!gameState || isGameOver || winners.length > 0) {
             prevGameState.current = gameState;
             return;
         }
-        if (gameState.pot > prevGameState.current.pot) playSound(SoundEffect.BET);
-        if (gameState.communityCards.length > prevGameState.current.communityCards.length) playSound(SoundEffect.DEAL);
-        const foldedPlayer = gameState.players.find((p, i) => p.isFolded && !prevGameState.current?.players[i]?.isFolded);
-        if (foldedPlayer) playSound(SoundEffect.FOLD);
         
-        // When the current player changes, reset the acknowledgement flag.
-        if (gameState.currentPlayerIndex !== prevGameState.current.currentPlayerIndex) {
-            setIsTurnAcknowledged(false);
+        const activePlayers = gameState.players.filter(p => !p.isFolded);
+
+        // --- Sound effect logic ---
+        if (prevGameState.current) {
+            const handIsConcluding = gameState.gamePhase === GamePhase.SHOWDOWN || activePlayers.length <= 1;
+
+            if (!handIsConcluding) {
+                // Bet/Call/Raise sound
+                if (gameState.pot > prevGameState.current.pot) {
+                    audioService.playSound(SoundEffect.BET);
+                }
+                
+                // Check sound
+                const lastActorIndex = prevGameState.current.currentPlayerIndex;
+                const actorNow = gameState.players[lastActorIndex];
+                const actorBefore = prevGameState.current.players[lastActorIndex];
+                if (actorNow?.action === ActionType.CHECK && actorNow.hasActed && !actorBefore?.hasActed) {
+                    audioService.playSound(SoundEffect.CHECK);
+                }
+
+                // Fold sound
+                const foldedPlayer = gameState.players.find((p, i) => p.isFolded && !prevGameState.current?.players[i]?.isFolded);
+                if (foldedPlayer) {
+                    audioService.playSound(SoundEffect.FOLD);
+                }
+            }
+
+            // Deal sound
+            if (gameState.communityCards.length > prevGameState.current.communityCards.length) {
+                audioService.playSound(SoundEffect.DEAL);
+            }
+        }
+
+
+        // --- Continuously calculate stats for the human player ---
+        const humanPlayer = gameState.players.find(p => !p.isAI);
+        if (humanPlayer) {
+            const activePhases = [GamePhase.PRE_FLOP, GamePhase.FLOP, GamePhase.TURN, GamePhase.RIVER];
+            if (!humanPlayer.isFolded && activePhases.includes(gameState.gamePhase)) {
+                const stats = pokerLogic.calculateStats(
+                    humanPlayer,
+                    gameState.communityCards,
+                    gameState.players.filter(p => !p.isFolded).length
+                );
+                setPlayerStats({ [humanPlayer.id]: stats });
+            } else {
+                // Clear stats if player folded or hand is over
+                setPlayerStats({});
+            }
+        }
+
+        // --- Game flow logic ---
+        // Hand ends because everyone else folded
+        if (activePlayers.length <= 1 && gameState.gamePhase !== GamePhase.SETUP && gameState.gamePhase !== GamePhase.SHOWDOWN) {
+            setWinners(activePlayers);
+            setWinningHand('the last one standing');
+            audioService.playSound(SoundEffect.WIN);
+
+            setTimeout(() => {
+                // Now, update the state: distribute pot, reset pot, etc.
+                const stateAfterWin = pokerLogic.endHand(gameState);
+                const playersWithChips = stateAfterWin.players.filter(p => p.chips > 0);
+                
+                if (playersWithChips.length <= 1) {
+                    setIsGameOver(true);
+                    setWinners(playersWithChips);
+                    setGameState(stateAfterWin); // Set final state for game over modal
+                } else {
+                    setWinners([]);
+                    setWinningHand('');
+                    setGameState(pokerLogic.startNewHand(stateAfterWin));
+                    audioService.playSound(SoundEffect.SHUFFLE);
+                }
+            }, 3000); // Wait for chip animation to winner
+
+        // Hand ends because it reached showdown
+        } else if (gameState.gamePhase === GamePhase.SHOWDOWN) {
+            const { winners, winningHandName } = pokerLogic.determineWinner(gameState);
+            setWinners(winners);
+            setWinningHand(winningHandName);
+            audioService.playSound(SoundEffect.WIN);
+            
+            setTimeout(() => {
+                // Now, update the state: distribute pot, reset pot, etc.
+                const stateAfterWin = pokerLogic.endHand(gameState);
+                const playersWithChips = stateAfterWin.players.filter(p => p.chips > 0);
+                
+                if (playersWithChips.length <= 1) {
+                    setIsGameOver(true);
+                    setWinners(playersWithChips);
+                    setGameState(stateAfterWin);
+                } else {
+                    setWinners([]);
+                    setWinningHand('');
+                    setGameState(pokerLogic.startNewHand(stateAfterWin));
+                    audioService.playSound(SoundEffect.SHUFFLE);
+                }
+            }, 5000); // Wait for showdown + chip animation
+        } else {
+            // If it's an AI's turn, let them act
+            const currentPlayer = gameState.players[gameState.currentPlayerIndex];
+            if (currentPlayer.isAI) {
+                handleAITurn(gameState);
+            }
         }
 
         prevGameState.current = gameState;
-    }, [gameState]);
+    }, [gameState, isGameOver, winners.length, handleAITurn]);
 
 
-    const connectWebSocket = useCallback((lId: string, pId: string) => {
-        if (ws.current && ws.current.readyState === WebSocket.OPEN) {
-            return;
-        }
-        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsHost = 'localhost:8000'; // Target the backend server directly
-        const wsUrl = `${wsProtocol}//${wsHost}/ws/${lId}/${pId}`;
+    const handleStartGame = async (playerConfig: PlayerConfig, aiCount: number, smallBlind: number, bigBlind: number, aiDifficulty: AIDifficulty) => {
+        // Unlock audio context on the first user interaction
+        await audioService.unlock();
         
-        ws.current = new WebSocket(wsUrl);
-
-        ws.current.onmessage = (event) => {
-            const data = JSON.parse(event.data);
-
-            if (data.type === 'LOBBY_UPDATE') {
-                setLobbyConfig(data.lobby);
-            } else if (data.type === 'GAME_START') {
-                setGameState(data.game_state);
-                setIsTurnAcknowledged(false); // Ensure modal shows for first player
-                setAppStage('playing');
-                playSound(SoundEffect.SHUFFLE);
-            } else if (data.type === 'GAME_STATE_UPDATE') {
-                setIsThinking(data.game_state.players[data.game_state.currentPlayerIndex]?.isAI ?? false);
-                setGameState(data.game_state);
-            } else if (data.type === 'WINNER_ANNOUNCEMENT') {
-                setGameState(data.game_state); // update final chip counts
-                setWinners(data.winners);
-                setWinningHand(data.winning_hand);
-                playSound(SoundEffect.WIN);
-                setTimeout(() => {
-                    setWinners([]);
-                    setWinningHand('');
-                }, 5000);
-            } else if (data.type === 'GAME_OVER') {
-                setIsGameOver(true);
-                setWinners(data.winners);
-            } else if (data.type === 'ERROR') {
-                console.error("Server error:", data.message);
-            }
-        };
-
-        ws.current.onclose = () => console.log('WebSocket disconnected');
-        ws.current.onerror = (error) => console.error('WebSocket error:', error);
-
-    }, []);
-
-    const handleCreateLobby = async (hostConfig: PlayerConfig, smallBlind: number, bigBlind: number) => {
-        try {
-            const newLobby = await api.createLobby(hostConfig, smallBlind, bigBlind);
-            
-            const newLobbyId = newLobby.id;
-            const host = newLobby.players.find(p => p.isHost);
-
-            if (!newLobbyId || !host) {
-                throw new Error("Invalid lobby data received from server.");
-            }
-            const newUserId = host.id;
-            
-            sessionStorage.setItem(CURRENT_USER_ID_KEY, newUserId);
-            setCurrentUserId(newUserId);
-            setLobbyId(newLobbyId);
-            setLobbyConfig(newLobby);
-            window.history.pushState({}, '', `?lobby=${newLobbyId}`);
-            
-            connectWebSocket(newLobbyId, newUserId);
-            setAppStage('lobby');
-        } catch (error) {
-            console.error("Failed to create lobby:", error);
-        }
-    };
-
-    const handleJoinLobby = async (name: string, chips: number) => {
-        if (!lobbyId) return;
-        try {
-            const { player } = await api.joinLobby(lobbyId, name, chips);
-            const newUserId = player.id;
-            sessionStorage.setItem(CURRENT_USER_ID_KEY, newUserId);
-            setCurrentUserId(newUserId);
-            connectWebSocket(lobbyId, newUserId);
-        } catch (error) {
-            console.error("Failed to join lobby:", error);
-        }
-    };
-    
-    const handleStartGame = () => {
-        if (lobbyId) api.startGame(lobbyId).catch(err => console.error("Failed to start game", err));
+        humanPlayerId.current = playerConfig.id;
+        const initialState = pokerLogic.initializeGame(playerConfig, aiCount, smallBlind, bigBlind, aiDifficulty);
+        isGameActive.current = true; // Set game to active
+        setGameState(initialState);
+        audioService.playSound(SoundEffect.SHUFFLE);
     };
 
     const handlePlayerAction = (action: ActionType, amount: number) => {
-        if (lobbyId && currentUserId) {
-            api.sendPlayerAction(lobbyId, currentUserId, action, amount)
-                .catch(err => console.error("Failed to send action:", err));
+        if (gameState && humanPlayerId.current) {
+            const newState = pokerLogic.handlePlayerAction(gameState, humanPlayerId.current, action, amount);
+            setGameState(newState);
         }
     };
 
     const handleEndGame = () => {
-        ws.current?.close();
-        ws.current = null;
+        isGameActive.current = false; // Set game to inactive
         setIsExitModalOpen(false);
         setIsGameOver(false);
         setGameState(null);
-        setLobbyConfig(null);
-        setLobbyId(null);
         setWinners([]);
         setWinningHand('');
-        setCurrentUserId(null);
-        sessionStorage.removeItem(CURRENT_USER_ID_KEY);
-        window.history.replaceState({}, '', window.location.pathname);
-        setAppStage('setup');
+        humanPlayerId.current = null;
     };
     
-    const handleAddAI = () => {
-      if (lobbyId) api.addAiPlayer(lobbyId).catch(err => console.error("Failed to add AI", err));
-    }
-    
-    const handleRemovePlayer = (playerId: string) => {
-        if(lobbyId) api.removePlayer(lobbyId, playerId).catch(err => console.error("Failed to remove player", err));
-    }
-
     const handleRequestExit = () => setIsExitModalOpen(true);
     const handleCancelExit = () => setIsExitModalOpen(false);
 
-    if (appStage === 'setup') {
-        return <GameSetup onCreateLobby={handleCreateLobby} />;
+    if (!gameState) {
+        return <GameSetup onStartGame={handleStartGame} />;
     }
     
-    if (appStage === 'lobby' && lobbyConfig) {
-        return <GameLobby 
-            lobbyConfig={lobbyConfig} 
-            onStartGame={handleStartGame} 
-            onLeaveLobby={handleEndGame}
-            currentUserId={currentUserId}
-            onJoinLobby={handleJoinLobby}
-            onAddAI={handleAddAI}
-            onRemovePlayer={handleRemovePlayer}
-        />;
-    }
+    const currentPlayer = gameState.players[gameState.currentPlayerIndex];
+    const isMyTurn = currentPlayer && !currentPlayer.isAI && currentPlayer.id === humanPlayerId.current;
 
-    if (appStage === 'playing' && gameState) {
-        const currentPlayer = gameState.players[gameState.currentPlayerIndex];
-        const isMyTurn = currentPlayer && !currentPlayer.isAI && currentPlayer.id === currentUserId;
-        const isGameActive = gameState.gamePhase !== GamePhase.SHOWDOWN && gameState.gamePhase !== GamePhase.SETUP;
-        const showTurnModal = isMyTurn && !isTurnAcknowledged && isGameActive;
+    const getPlayerCardVisibility = (player: Player): boolean => {
+        if (gameState.gamePhase === GamePhase.SHOWDOWN) {
+            return !player.isFolded;
+        }
+        return !player.isAI;
+    };
 
-        const getPlayerCardVisibility = (player: Player): boolean => {
-            if (gameState.gamePhase === GamePhase.SHOWDOWN) {
-                return !player.isFolded;
-            }
-            // For pass-and-play, only show cards if it is that player's turn and they have acknowledged it.
-            const isThisPlayersTurn = player.id === currentPlayer?.id;
-            if (isThisPlayersTurn && !player.isAI) {
-                return isTurnAcknowledged;
-            }
-            return false;
-        };
-
-        return (
-            <div className="bg-[#0A0A0A] min-h-screen w-full flex flex-col items-center justify-center font-sans text-white p-4 overflow-hidden">
-                <div className="w-full flex-grow flex flex-col items-center justify-center">
-                    <PokerTable 
-                        gameState={gameState} 
-                        playerStats={gameState.playerStats || {}}
-                        isThinking={isThinking}
-                        onRequestExit={handleRequestExit} 
-                        getPlayerCardVisibility={getPlayerCardVisibility}
-                    />
-                    <div className="relative z-20 mt-6 h-[170px] flex items-center justify-center">
-                        {isGameActive && currentPlayer && (
-                            <ActionButtons 
-                                player={currentPlayer} 
-                                gameState={gameState} 
-                                onAction={handlePlayerAction}
-                                disabled={!isMyTurn || isThinking || showTurnModal}
-                            />
-                        )}
-                    </div>
+    return (
+        <div className="bg-[#0A0A0A] min-h-screen w-full flex flex-col items-center justify-center font-sans text-white p-2 sm:p-4 overflow-hidden">
+            <div className="w-full flex-grow flex flex-col items-center justify-center pb-24 sm:pb-0">
+                <PokerTable 
+                    gameState={gameState}
+                    prevGameState={prevGameState.current} 
+                    playerStats={playerStats}
+                    isThinking={isThinking}
+                    onRequestExit={handleRequestExit} 
+                    getPlayerCardVisibility={getPlayerCardVisibility}
+                    humanPlayerId={humanPlayerId.current}
+                    winners={winners}
+                />
+                <div className="fixed bottom-0 left-2 right-2 sm:left-0 sm:right-0 pb-4 sm:p-0 sm:relative sm:mt-6 h-auto flex items-center justify-center z-30 bg-[#0A0A0A] sm:bg-transparent">
+                    {gameState.gamePhase !== GamePhase.SHOWDOWN && currentPlayer && (
+                        <ActionButtons 
+                            player={currentPlayer} 
+                            gameState={gameState} 
+                            onAction={handlePlayerAction}
+                            disabled={!isMyTurn || isThinking}
+                        />
+                    )}
                 </div>
-                {showTurnModal && (
-                    <TurnTransitionModal 
-                        playerName={currentPlayer.name} 
-                        onConfirm={() => {
-                            setIsTurnAcknowledged(true);
-                            playSound(SoundEffect.DEAL); // Sound for revealing your cards
-                        }} 
-                    />
-                )}
-                {isGameOver && winners.length > 0 && <GameOverModal winner={winners[0]} onRestart={handleEndGame} />}
-                {!isGameOver && winners.length > 0 && <WinnerModal winners={winners} hand={winningHand} />}
-                {isExitModalOpen && <ExitConfirmationModal onConfirm={handleEndGame} onCancel={handleCancelExit} />}
             </div>
-        );
-    }
-
-    return <div className="flex items-center justify-center min-h-screen text-xl">Connecting...</div>;
+            {isGameOver && winners.length > 0 && <GameOverModal winner={winners[0]} onRestart={handleEndGame} />}
+            {isExitModalOpen && <ExitConfirmationModal onConfirm={handleEndGame} onCancel={handleCancelExit} />}
+        </div>
+    );
 };
 
 export default App;

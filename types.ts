@@ -1,5 +1,4 @@
 
-
 export enum Suit {
     HEARTS = '♥',
     DIAMONDS = '♦',
@@ -36,12 +35,19 @@ export enum ActionType {
     RAISE = 'RAISE',
 }
 
+export enum AIDifficulty {
+    EASY = 'EASY',
+    MEDIUM = 'MEDIUM',
+    HARD = 'HARD',
+}
+
 export interface PlayerConfig {
     id: string;
     name: string;
     chips: number;
     isAI: boolean;
     isHost?: boolean;
+    difficulty?: AIDifficulty;
 }
 
 export interface LobbyConfig {
@@ -65,6 +71,7 @@ export interface Player {
     action: ActionType | null;
     hasActed: boolean; // Has the player acted in the current betting round?
     isHost?: boolean;
+    difficulty?: AIDifficulty;
 }
 
 export enum GamePhase {
