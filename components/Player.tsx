@@ -2,6 +2,8 @@ import React from 'react';
 import CardComponent from './Card';
 import { Player as PlayerType, ActionType, PlayerStats } from '../types';
 
+type PlayerDisplayVariant = 'default' | 'compact';
+
 interface PlayerProps {
     player: PlayerType;
     stats?: PlayerStats;
@@ -11,11 +13,34 @@ interface PlayerProps {
     isBigBlind: boolean;
     showCards: boolean;
     isWinner: boolean;
+    variant?: PlayerDisplayVariant;
 }
 
-const Player: React.FC<PlayerProps> = ({ player, stats, isCurrent, isDealer, isSmallBlind, isBigBlind, showCards, isWinner }) => {
+const Player: React.FC<PlayerProps> = ({
+    player,
+    stats,
+    isCurrent,
+    isDealer,
+    isSmallBlind,
+    isBigBlind,
+    showCards,
+    isWinner,
+    variant = 'default',
+}) => {
+    const isCompact = variant === 'compact';
+
+    const containerWidth = isCompact ? 'w-28 sm:w-32' : 'w-36 sm:w-44';
+    const cardHeight = isCompact ? 'h-12 sm:h-16' : 'h-14 sm:h-20';
+    const nameTextClasses = isCompact ? 'text-xs sm:text-sm' : 'text-sm sm:text-lg';
+    const stackTextClasses = isCompact ? 'text-xs sm:text-sm' : 'text-sm sm:text-lg';
+    const paddingClasses = isCompact ? 'p-1.5 sm:p-2' : 'p-1 sm:p-2';
+    const actionOffset = isCompact ? '-top-5' : '-top-6';
+    const winMeterHeight = isCompact ? 'h-2 sm:h-3' : 'h-2.5 sm:h-3.5';
+    const winMeterText = isCompact ? 'text-[10px] sm:text-xs' : 'text-[11px] sm:text-xs';
+    const statsSpacing = isCompact ? 'mt-1' : 'mt-1 sm:mt-2';
+
     const actionText = player.action ? (
-        <div className={`absolute -top-6 px-2 py-1 text-xs sm:text-sm rounded-md shadow-lg z-20 ${
+        <div className={`absolute ${actionOffset} px-2 py-0.5 text-xs sm:text-sm rounded-md shadow-lg z-20 ${
             player.action === ActionType.FOLD ? 'bg-gray-600' : 
             player.action === ActionType.CHECK || player.action === ActionType.CALL ? 'bg-blue-600' : 'bg-green-600'
         }`}>
@@ -36,8 +61,8 @@ const Player: React.FC<PlayerProps> = ({ player, stats, isCurrent, isDealer, isS
     );
 
     return (
-        <div className={`w-36 sm:w-44 z-20`}>
-             <div className={`relative p-1 sm:p-2 rounded-lg border-2 transition-all duration-300 ${
+        <div className={`${containerWidth} z-20`}>
+             <div className={`relative ${paddingClasses} rounded-lg border-2 transition-all duration-300 ${
                     player.isFolded ? 'opacity-40' : ''} 
                     ${isCurrent ? 'breathing-border border-[#FFD700]' : 'border-[#2D2D2D]'} 
                     ${isWinner ? 'animate-winner-glow' : ''}
@@ -47,11 +72,11 @@ const Player: React.FC<PlayerProps> = ({ player, stats, isCurrent, isDealer, isS
                 {actionText}
                 
                 <div className="text-center">
-                    <p className="font-bold truncate text-sm sm:text-lg text-white">{player.name}</p>
-                    <p className="text-sm sm:text-lg font-mono text-[#F7E7CE]">${player.chips}</p>
+                    <p className={`font-bold truncate ${nameTextClasses} text-white`}>{player.name}</p>
+                    <p className={`${stackTextClasses} font-mono text-[#F7E7CE]`}>${player.chips}</p>
                 </div>
 
-                <div className="flex justify-center items-center h-14 sm:h-20 my-1 space-x-1">
+                <div className={`flex justify-center items-center ${cardHeight} my-1 space-x-1`}>
                     {player.hand.map((card, index) => (
                         <CardComponent key={index} card={card} facedown={!showCards} small />
                     ))}
@@ -64,14 +89,14 @@ const Player: React.FC<PlayerProps> = ({ player, stats, isCurrent, isDealer, isS
                 </div>
 
                 {stats && !player.isFolded && (
-                    <div className="mt-1 sm:mt-2 text-center space-y-1">
-                        <p className="text-xs sm:text-sm font-semibold text-neutral-400 uppercase tracking-wider">{stats.handName}</p>
-                        <div className="w-full bg-neutral-600 rounded-full h-2.5 sm:h-3.5 relative overflow-hidden border border-black/20">
+                    <div className={`${statsSpacing} text-center space-y-1`}>
+                        <p className={`text-[11px] sm:text-xs font-semibold text-neutral-400 uppercase tracking-wider ${isCompact ? 'leading-4' : ''}`}>{stats.handName}</p>
+                        <div className={`w-full bg-neutral-600 rounded-full ${winMeterHeight} relative overflow-hidden border border-black/20`}>
                             <div 
                                 className="bg-gradient-to-r from-yellow-500 to-amber-400 h-full rounded-full transition-all duration-500 ease-out" 
                                 style={{ width: `${stats.winProbability}%` }}
                             ></div>
-                            <span className="absolute inset-0 flex items-center justify-center text-[11px] sm:text-xs font-bold text-white text-shadow-sm">
+                            <span className={`absolute inset-0 flex items-center justify-center font-bold text-white text-shadow-sm ${winMeterText}`}>
                                 {Math.round(stats.winProbability)}% Win
                             </span>
                         </div>

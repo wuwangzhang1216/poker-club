@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { GameState, Player, Card, GamePhase, ActionType, PlayerStats, PlayerConfig, AIDifficulty } from './types';
+import { GameState, Player, GamePhase, ActionType, PlayerStats, GameMode, GameStartOptions } from './types';
 import * as pokerLogic from './services/pokerLogic';
 import * as geminiService from './services/geminiService';
 import PokerTable from './components/PokerTable';
@@ -17,13 +17,44 @@ const App: React.FC = () => {
     const [isGameOver, setIsGameOver] = useState(false);
     const [isExitModalOpen, setIsExitModalOpen] = useState(false);
     const [playerStats, setPlayerStats] = useState<Record<string, PlayerStats>>({});
+    const [turnTimeRemaining, setTurnTimeRemaining] = useState<number | null>(null);
+    const [levelTimeRemaining, setLevelTimeRemaining] = useState<number | null>(null);
     const prevGameState = useRef<GameState | null>(null);
     const humanPlayerId = useRef<string | null>(null);
     const isGameActive = useRef(false); // New ref to track game status
+    const turnTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const turnCountdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const levelCountdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const latestGameStateRef = useRef<GameState | null>(null);
 
     useEffect(() => {
         // Preload sounds when the app first mounts
         audioService.loadSounds();
+    }, []);
+
+    const clearTurnTimers = useCallback(() => {
+        if (turnTimeoutRef.current) {
+            clearTimeout(turnTimeoutRef.current);
+            turnTimeoutRef.current = null;
+        }
+        if (turnCountdownRef.current) {
+            clearInterval(turnCountdownRef.current);
+            turnCountdownRef.current = null;
+        }
+    }, []);
+
+    const clearLevelTimer = useCallback(() => {
+        if (levelCountdownRef.current) {
+            clearInterval(levelCountdownRef.current);
+            levelCountdownRef.current = null;
+        }
+    }, []);
+
+    const applyPlayerAction = useCallback((playerId: string, action: ActionType, amount: number) => {
+        setGameState(prev => {
+            if (!prev) return prev;
+            return pokerLogic.handlePlayerAction(prev, playerId, action, amount);
+        });
     }, []);
 
     const handleAITurn = useCallback(async (state: GameState) => {
@@ -44,24 +75,22 @@ const App: React.FC = () => {
 
         try {
             const { action, amount } = await geminiService.getAIPlayerAction(state, currentPlayer);
-            const newState = pokerLogic.handlePlayerAction(state, currentPlayer.id, action, amount);
-            if (isGameActive.current) { // Check again before setting state
-                setGameState(newState);
+            if (isGameActive.current) {
+                applyPlayerAction(currentPlayer.id, action, amount);
             }
         } catch (error) {
             console.error("Error getting AI action, AI will check or fold.", error);
             // Fallback action if API fails
             const fallbackAction = state.currentBet > currentPlayer.bet ? ActionType.FOLD : ActionType.CHECK;
-            const newState = pokerLogic.handlePlayerAction(state, currentPlayer.id, fallbackAction, 0);
-            if (isGameActive.current) { // Check again before setting state
-                setGameState(newState);
+            if (isGameActive.current) {
+                applyPlayerAction(currentPlayer.id, fallbackAction, 0);
             }
         } finally {
             if (isGameActive.current) { // Only update if game is still active
                 setIsThinking(false);
             }
         }
-    }, []);
+    }, [applyPlayerAction]);
     
     useEffect(() => {
         if (!gameState || isGameOver || winners.length > 0) {
@@ -178,22 +207,220 @@ const App: React.FC = () => {
         prevGameState.current = gameState;
     }, [gameState, isGameOver, winners.length, handleAITurn]);
 
+    useEffect(() => {
+        latestGameStateRef.current = gameState;
+    }, [gameState]);
 
-    const handleStartGame = async (playerConfig: PlayerConfig, aiCount: number, smallBlind: number, bigBlind: number, aiDifficulty: AIDifficulty) => {
+    useEffect(() => {
+        if (!gameState || gameState.mode !== GameMode.TOURNAMENT || !gameState.tournament) {
+            clearTurnTimers();
+            setTurnTimeRemaining(null);
+            return;
+        }
+
+        const currentPlayer = gameState.players[gameState.currentPlayerIndex];
+        if (!currentPlayer) {
+            clearTurnTimers();
+            setTurnTimeRemaining(null);
+            return;
+        }
+
+        const isHumanTurn = !currentPlayer.isAI && currentPlayer.id === humanPlayerId.current && !currentPlayer.isFolded && currentPlayer.chips > 0 && gameState.gamePhase !== GamePhase.SHOWDOWN;
+        if (!isHumanTurn) {
+            clearTurnTimers();
+            setTurnTimeRemaining(null);
+            return;
+        }
+
+        const timeLimit = gameState.tournament.turnTimeLimitSeconds;
+        if (!timeLimit) {
+            clearTurnTimers();
+            setTurnTimeRemaining(null);
+            return;
+        }
+
+        clearTurnTimers();
+        setTurnTimeRemaining(timeLimit);
+
+        turnTimeoutRef.current = setTimeout(() => {
+            const latestState = latestGameStateRef.current;
+            if (!latestState || latestState.mode !== GameMode.TOURNAMENT || !latestState.tournament) {
+                return;
+            }
+            const latestPlayer = latestState.players[latestState.currentPlayerIndex];
+            if (!latestPlayer || latestPlayer.id !== humanPlayerId.current || latestPlayer.isFolded || latestPlayer.chips === 0) {
+                return;
+            }
+            const needsToCall = latestState.currentBet > latestPlayer.bet;
+            const fallbackAction = needsToCall ? ActionType.FOLD : ActionType.CHECK;
+            clearTurnTimers();
+            setTurnTimeRemaining(null);
+            applyPlayerAction(latestPlayer.id, fallbackAction, 0);
+        }, timeLimit * 1000);
+
+        turnCountdownRef.current = setInterval(() => {
+            setTurnTimeRemaining(prev => {
+                if (prev === null) return prev;
+                return prev > 0 ? prev - 1 : 0;
+            });
+        }, 1000);
+
+        return () => {
+            clearTurnTimers();
+        };
+    }, [gameState, clearTurnTimers, applyPlayerAction]);
+
+    useEffect(() => {
+        if (!gameState || gameState.mode !== GameMode.TOURNAMENT || !gameState.tournament) {
+            clearLevelTimer();
+            setLevelTimeRemaining(null);
+            return;
+        }
+
+        const updateRemaining = () => {
+            const latestState = latestGameStateRef.current;
+            if (!latestState || latestState.mode !== GameMode.TOURNAMENT || !latestState.tournament) {
+                setLevelTimeRemaining(null);
+                return;
+            }
+            const remainingMs = latestState.tournament.levelEndsAt - Date.now();
+            if (remainingMs <= 0) {
+                setLevelTimeRemaining(0);
+                setGameState(prev => {
+                    if (!prev || prev.mode !== GameMode.TOURNAMENT || !prev.tournament) {
+                        return prev;
+                    }
+
+                    const { blindSchedule, blindLevelIndex, levelDurationMs } = prev.tournament;
+                    const hasNextLevel = blindLevelIndex < blindSchedule.length - 1;
+                    const nextIndex = hasNextLevel ? blindLevelIndex + 1 : blindLevelIndex;
+                    const shouldApplyNow = hasNextLevel && prev.gamePhase === GamePhase.SETUP;
+                    const nextBlinds = blindSchedule[nextIndex];
+
+                    const updatedTournament = {
+                        ...prev.tournament,
+                        levelEndsAt: Date.now() + levelDurationMs,
+                        blindLevelIndex: shouldApplyNow ? nextIndex : prev.tournament.blindLevelIndex,
+                        pendingLevelIndex: shouldApplyNow ? null : (hasNextLevel ? nextIndex : null),
+                    };
+
+                    if (shouldApplyNow) {
+                        return {
+                            ...prev,
+                            smallBlind: nextBlinds.smallBlind,
+                            bigBlind: nextBlinds.bigBlind,
+                            minRaise: nextBlinds.bigBlind,
+                            tournament: updatedTournament,
+                        };
+                    }
+
+                    if (!hasNextLevel) {
+                        return {
+                            ...prev,
+                            tournament: {
+                                ...updatedTournament,
+                                pendingLevelIndex: null,
+                            },
+                        };
+                    }
+
+                    return {
+                        ...prev,
+                        tournament: updatedTournament,
+                    };
+                });
+                return;
+            }
+
+            setLevelTimeRemaining(Math.max(1, Math.ceil(remainingMs / 1000)));
+        };
+
+        updateRemaining();
+        clearLevelTimer();
+        levelCountdownRef.current = setInterval(updateRemaining, 1000);
+
+        return () => {
+            clearLevelTimer();
+        };
+    }, [gameState, clearLevelTimer]);
+
+    useEffect(() => {
+        if (!gameState || gameState.mode !== GameMode.TOURNAMENT || !gameState.tournament) {
+            return;
+        }
+
+        if (gameState.gamePhase !== GamePhase.SETUP) {
+            return;
+        }
+
+        if (gameState.tournament.pendingLevelIndex == null) {
+            return;
+        }
+
+        setGameState(prev => {
+            if (!prev || prev.mode !== GameMode.TOURNAMENT || !prev.tournament) {
+                return prev;
+            }
+
+            if (prev.gamePhase !== GamePhase.SETUP || prev.tournament.pendingLevelIndex == null) {
+                return prev;
+            }
+
+            const targetIndex = prev.tournament.pendingLevelIndex;
+            const nextBlinds = prev.tournament.blindSchedule[targetIndex];
+
+            return {
+                ...prev,
+                smallBlind: nextBlinds.smallBlind,
+                bigBlind: nextBlinds.bigBlind,
+                minRaise: nextBlinds.bigBlind,
+                tournament: {
+                    ...prev.tournament,
+                    blindLevelIndex: targetIndex,
+                    pendingLevelIndex: null,
+                },
+            };
+        });
+    }, [gameState]);
+
+
+    const handleStartGame = async (options: GameStartOptions) => {
         // Unlock audio context on the first user interaction
         await audioService.unlock();
-        
-        humanPlayerId.current = playerConfig.id;
-        const initialState = pokerLogic.initializeGame(playerConfig, aiCount, smallBlind, bigBlind, aiDifficulty);
+
+        clearTurnTimers();
+        clearLevelTimer();
+        setTurnTimeRemaining(null);
+        setLevelTimeRemaining(null);
+
+        humanPlayerId.current = options.playerConfig.id;
+        const initialState = pokerLogic.initializeGame(
+            options.playerConfig,
+            options.aiCount,
+            options.smallBlind,
+            options.bigBlind,
+            options.aiDifficulty,
+            options.mode,
+            options.tournamentConfig
+        );
         isGameActive.current = true; // Set game to active
+        latestGameStateRef.current = initialState;
+        setIsGameOver(false);
+        setIsExitModalOpen(false);
+        setWinners([]);
+        setWinningHand('');
         setGameState(initialState);
+        if (initialState.mode === GameMode.TOURNAMENT && initialState.tournament) {
+            const remainingSeconds = Math.max(1, Math.ceil((initialState.tournament.levelEndsAt - Date.now()) / 1000));
+            setLevelTimeRemaining(remainingSeconds);
+        }
         audioService.playSound(SoundEffect.SHUFFLE);
     };
 
     const handlePlayerAction = (action: ActionType, amount: number) => {
-        if (gameState && humanPlayerId.current) {
-            const newState = pokerLogic.handlePlayerAction(gameState, humanPlayerId.current, action, amount);
-            setGameState(newState);
+        if (humanPlayerId.current) {
+            clearTurnTimers();
+            applyPlayerAction(humanPlayerId.current, action, amount);
         }
     };
 
@@ -205,6 +432,11 @@ const App: React.FC = () => {
         setWinners([]);
         setWinningHand('');
         humanPlayerId.current = null;
+        latestGameStateRef.current = null;
+        clearTurnTimers();
+        clearLevelTimer();
+        setTurnTimeRemaining(null);
+        setLevelTimeRemaining(null);
     };
     
     const handleRequestExit = () => setIsExitModalOpen(true);
@@ -225,25 +457,29 @@ const App: React.FC = () => {
     };
 
     return (
-        <div className="bg-[#0A0A0A] min-h-screen w-full flex flex-col items-center justify-center font-sans text-white p-2 sm:p-4 overflow-hidden">
-            <div className="w-full flex-grow flex flex-col items-center justify-center pb-24 sm:pb-0">
-                <PokerTable 
-                    gameState={gameState}
-                    prevGameState={prevGameState.current} 
-                    playerStats={playerStats}
-                    isThinking={isThinking}
-                    onRequestExit={handleRequestExit} 
-                    getPlayerCardVisibility={getPlayerCardVisibility}
-                    humanPlayerId={humanPlayerId.current}
-                    winners={winners}
-                />
-                <div className="fixed bottom-0 left-2 right-2 sm:left-0 sm:right-0 pb-4 sm:p-0 sm:relative sm:mt-6 h-auto flex items-center justify-center z-30 bg-[#0A0A0A] sm:bg-transparent">
+        <div className="bg-[#0A0A0A] h-screen w-full font-sans text-white px-2 sm:px-4 py-3 sm:py-6 overflow-hidden">
+            <div className="mx-auto flex h-full max-w-5xl flex-col gap-3 sm:gap-6">
+                <div className="flex-1 min-h-0 flex items-center justify-center overflow-hidden">
+                    <PokerTable 
+                        gameState={gameState}
+                        prevGameState={prevGameState.current} 
+                        playerStats={playerStats}
+                        isThinking={isThinking}
+                        onRequestExit={handleRequestExit} 
+                        getPlayerCardVisibility={getPlayerCardVisibility}
+                        humanPlayerId={humanPlayerId.current}
+                        winners={winners}
+                        levelTimeRemaining={levelTimeRemaining}
+                    />
+                </div>
+                <div className="flex justify-center w-full flex-shrink-0 pb-1 sm:pb-0">
                     {gameState.gamePhase !== GamePhase.SHOWDOWN && currentPlayer && (
                         <ActionButtons 
                             player={currentPlayer} 
                             gameState={gameState} 
                             onAction={handlePlayerAction}
                             disabled={!isMyTurn || isThinking}
+                            turnTimeRemaining={turnTimeRemaining}
                         />
                     )}
                 </div>

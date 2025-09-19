@@ -6,9 +6,10 @@ interface ActionButtonsProps {
     gameState: GameState;
     onAction: (action: ActionType, amount: number) => void;
     disabled: boolean;
+    turnTimeRemaining?: number | null;
 }
 
-const ActionButtons: React.FC<ActionButtonsProps> = ({ player, gameState, onAction, disabled }) => {
+const ActionButtons: React.FC<ActionButtonsProps> = ({ player, gameState, onAction, disabled, turnTimeRemaining }) => {
     const { currentBet, minRaise, bigBlind, pot, players } = gameState;
     const callAmount = Math.min(player.chips, currentBet - player.bet);
     const canCheck = currentBet === player.bet;
@@ -86,8 +87,15 @@ const ActionButtons: React.FC<ActionButtonsProps> = ({ player, gameState, onActi
         ${!disabled ? 'breathing-border border-[#FFD700]' : 'border-[#2D2D2D]'}
     `;
 
+    const showTimer = typeof turnTimeRemaining === 'number';
+
     return (
         <div className={containerClasses}>
+            {showTimer && (
+                <div className="text-center text-xs sm:text-sm font-semibold text-[#FFD700] tracking-wide">
+                    Act within {Math.max(0, turnTimeRemaining ?? 0)}s
+                </div>
+            )}
              {/* --- DESKTOP LAYOUT --- */}
             <div className="hidden sm:flex sm:flex-col sm:space-y-3">
                 <div className="flex space-x-2">

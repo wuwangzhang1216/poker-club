@@ -1,4 +1,4 @@
-import { Card, GameState, Player, Suit, Rank, GamePhase, ActionType, PlayerConfig, HandRank, HandEvaluation, PlayerStats, AIDifficulty } from '../types';
+import { Card, GameState, Player, Suit, Rank, GamePhase, ActionType, PlayerConfig, HandRank, HandEvaluation, PlayerStats, AIDifficulty, GameMode, TournamentConfig } from '../types';
 import { SUITS, RANKS, RANK_VALUES } from '../constants';
 
 const AI_NAMES = ["Gemini Pro", "Flash", "Orion", "Nova", "HAL", "Skynet", "Deep Blue", "Watson"];
@@ -189,25 +189,37 @@ export const determineWinner = (gameState: GameState): { winners: Player[], winn
 
 // --- Game Initialization ---
 
-export const initializeGame = (playerConfig: PlayerConfig, aiCount: number, smallBlind: number, bigBlind: number, aiDifficulty: AIDifficulty): GameState => {
+export const initializeGame = (
+    playerConfig: PlayerConfig,
+    aiCount: number,
+    smallBlind: number,
+    bigBlind: number,
+    aiDifficulty: AIDifficulty,
+    mode: GameMode = GameMode.CASUAL,
+    tournamentConfig?: TournamentConfig
+): GameState => {
     const shuffledAiNames = shuffleDeck(AI_NAMES);
-    const players: Player[] = [
-        {
-            ...playerConfig,
-            hand: [],
-            isFolded: false,
-            bet: 0,
-            totalBet: 0,
-            action: null,
-            hasActed: false,
-        }
-    ];
+    const isTournament = mode === GameMode.TOURNAMENT && !!tournamentConfig;
+
+    const startingChips = isTournament && tournamentConfig ? tournamentConfig.startingChips : playerConfig.chips;
+    const humanPlayer: Player = {
+        ...playerConfig,
+        chips: startingChips,
+        hand: [],
+        isFolded: false,
+        bet: 0,
+        totalBet: 0,
+        action: null,
+        hasActed: false,
+    };
+
+    const players: Player[] = [humanPlayer];
 
     for (let i = 0; i < aiCount; i++) {
         players.push({
             id: `ai_${i + 1}_${Date.now()}`,
             name: shuffledAiNames[i],
-            chips: playerConfig.chips,
+            chips: startingChips,
             hand: [],
             isAI: true,
             isFolded: false,
@@ -221,6 +233,12 @@ export const initializeGame = (playerConfig: PlayerConfig, aiCount: number, smal
 
     const dealerIndex = Math.floor(Math.random() * players.length);
 
+    const blindLevel = isTournament && tournamentConfig?.blindSchedule.length
+        ? tournamentConfig.blindSchedule[0]
+        : undefined;
+    const resolvedSmallBlind = blindLevel?.smallBlind ?? smallBlind;
+    const resolvedBigBlind = blindLevel?.bigBlind ?? bigBlind;
+
     const gameState: GameState = {
         players,
         deck: [],
@@ -228,14 +246,23 @@ export const initializeGame = (playerConfig: PlayerConfig, aiCount: number, smal
         pot: 0,
         currentPlayerIndex: 0,
         dealerIndex,
-        smallBlind,
-        bigBlind,
+        smallBlind: resolvedSmallBlind,
+        bigBlind: resolvedBigBlind,
         smallBlindIndex: 0,
         bigBlindIndex: 0,
         gamePhase: GamePhase.SETUP,
         currentBet: 0,
-        minRaise: bigBlind,
+        minRaise: resolvedBigBlind,
         lastRaiserIndex: -1,
+        mode,
+        tournament: isTournament && tournamentConfig ? {
+            blindSchedule: tournamentConfig.blindSchedule,
+            blindLevelIndex: 0,
+            levelDurationMs: tournamentConfig.levelDurationMs,
+            levelEndsAt: Date.now() + tournamentConfig.levelDurationMs,
+            turnTimeLimitSeconds: tournamentConfig.turnTimeLimitSeconds,
+            pendingLevelIndex: null,
+        } : undefined,
     };
 
     return startNewHand(gameState);

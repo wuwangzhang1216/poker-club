@@ -1,44 +1,32 @@
 export enum SoundEffect {
-    DEAL = '/sounds/card-deal.wav',
-    BET = '/sounds/chip-bet.wav',
-    FOLD = '/sounds/card-fold.wav',
-    WIN = '/sounds/chips-stack.wav',
-    CHECK = '/sounds/card-check.wav',
-    SHUFFLE = '/sounds/card-shuffle.wav',
+    DEAL = 'deal',
+    BET = 'bet',
+    FOLD = 'fold',
+    WIN = 'win',
+    CHECK = 'check',
+    SHUFFLE = 'shuffle',
 }
 
+const SOUND_FILE_MAP: Record<SoundEffect, string> = {
+    [SoundEffect.DEAL]: new URL('../sounds/card-deal.wav', import.meta.url).href,
+    [SoundEffect.BET]: new URL('../sounds/chip-bet.wav', import.meta.url).href,
+    [SoundEffect.FOLD]: new URL('../sounds/card-fold.wav', import.meta.url).href,
+    [SoundEffect.WIN]: new URL('../sounds/hand-win.wav', import.meta.url).href,
+    [SoundEffect.CHECK]: new URL('../sounds/card-check.wav', import.meta.url).href,
+    [SoundEffect.SHUFFLE]: new URL('../sounds/card-shuffle.wav', import.meta.url).href,
+};
+
 class AudioService {
-    private audioContext: AudioContext | null = null;
-    private soundCache: Map<SoundEffect, AudioBuffer> = new Map();
+    private soundCache: Map<SoundEffect, HTMLAudioElement> = new Map();
     private isUnlocked = false;
     private isLoading = false;
     private soundsLoaded = false;
     private onLoadedCallbacks: (() => void)[] = [];
 
-    private async getContext(): Promise<AudioContext> {
-        if (!this.audioContext) {
-            try {
-                this.audioContext = new AudioContext();
-            } catch (e) {
-                console.error("Web Audio API is not supported in this browser.", e);
-                return Promise.reject("Audio not supported");
-            }
-        }
-        return this.audioContext;
-    }
-
     public async unlock() {
         if (this.isUnlocked) return;
-        try {
-            const context = await this.getContext();
-            if (context.state === 'suspended') {
-                await context.resume();
-            }
-            this.isUnlocked = true;
-            console.log("Audio context unlocked.");
-        } catch (error) {
-            console.error("Failed to unlock audio context:", error);
-        }
+        this.isUnlocked = true;
+        console.log("Audio unlocked for playback.");
     }
 
     public areSoundsLoaded(): boolean {
@@ -58,19 +46,39 @@ class AudioService {
         this.isLoading = true;
         
         try {
-            const context = await this.getContext();
             const soundPromises = Object.values(SoundEffect).map(async (sound) => {
-                try {
-                    const response = await fetch(sound);
-                    if (!response.ok) {
-                        throw new Error(`Failed to load sound: ${sound}, status: ${response.statusText}`);
+                const url = SOUND_FILE_MAP[sound];
+                return new Promise<void>((resolve) => {
+                    const audio = new Audio(url);
+                    audio.preload = 'auto';
+
+                    const handleReady = () => {
+                        this.soundCache.set(sound, audio);
+                        cleanup();
+                        resolve();
+                    };
+
+                    const handleError = (event: Event) => {
+                        console.error(`Could not load sound: ${url}`, event);
+                        cleanup();
+                        resolve();
+                    };
+
+                    const cleanup = () => {
+                        audio.removeEventListener('canplaythrough', handleReady);
+                        audio.removeEventListener('error', handleError);
+                    };
+
+                    if (audio.readyState >= HTMLMediaElement.HAVE_ENOUGH_DATA) {
+                        this.soundCache.set(sound, audio);
+                        resolve();
+                        return;
                     }
-                    const arrayBuffer = await response.arrayBuffer();
-                    const audioBuffer = await context.decodeAudioData(arrayBuffer);
-                    this.soundCache.set(sound, audioBuffer);
-                } catch (error) {
-                    console.error(`Could not load or decode sound: ${sound}`, error);
-                }
+
+                    audio.addEventListener('canplaythrough', handleReady, { once: true });
+                    audio.addEventListener('error', handleError, { once: true });
+                    audio.load();
+                });
             });
 
             await Promise.all(soundPromises);
@@ -86,27 +94,18 @@ class AudioService {
     }
 
     public playSound(sound: SoundEffect) {
-        if (!this.isUnlocked || !this.audioContext) {
-            console.warn(`Cannot play sound, audio context not unlocked. Sound: ${sound}`);
+        if (!this.isUnlocked) {
+            console.warn(`Cannot play sound, audio not unlocked. Sound: ${sound}`);
             return;
         }
         
-        const audioBuffer = this.soundCache.get(sound);
-        if (audioBuffer) {
-            try {
-                const source = this.audioContext.createBufferSource();
-                source.buffer = audioBuffer;
-                
-                // Add a gain node to control volume
-                const gainNode = this.audioContext.createGain();
-                gainNode.gain.setValueAtTime(0.4, this.audioContext.currentTime);
-
-                source.connect(gainNode);
-                gainNode.connect(this.audioContext.destination);
-                source.start(0);
-            } catch (error) {
+        const audioElement = this.soundCache.get(sound);
+        if (audioElement) {
+            const instance = audioElement.cloneNode(true) as HTMLAudioElement;
+            instance.volume = 0.4;
+            instance.play().catch(error => {
                 console.error(`Error playing sound ${sound}:`, error);
-            }
+            });
         } else {
             console.warn(`Sound not found in cache: ${sound}`);
         }

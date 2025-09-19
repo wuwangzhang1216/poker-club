@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { GameState, ActionType, Player as PlayerType, GamePhase, PlayerStats, Card } from '../types';
+import { GameState, Player as PlayerType, GamePhase, PlayerStats, Card, GameMode } from '../types';
 import Player from './Player';
 import CardComponent from './Card';
-import ActionButtons from './ActionButtons';
 import PotChips from './PotChips';
 import { getChipColor } from './Chip';
 
@@ -15,6 +14,7 @@ interface PokerTableProps {
     getPlayerCardVisibility: (player: PlayerType) => boolean;
     humanPlayerId: string | null;
     winners: PlayerType[];
+    levelTimeRemaining: number | null;
 }
 
 const useIsMobile = () => {
@@ -39,7 +39,13 @@ const getCircularPlayerPositions = (numPlayers: number, humanPlayerIndex: number
         const angle = angleOffset + i * angleStep;
         const x = 50 + 37 * Math.cos(angle);
         const y = 50 + 35 * Math.sin(angle);
-        positions.push({ top: `${y}%`, left: `${x}%`, transform: 'translate(-50%, -50%)' });
+        const translateX = (Math.cos(angle) * 6).toFixed(2);
+        const translateY = (Math.sin(angle) * 18).toFixed(2);
+        positions.push({
+            top: `${y}%`,
+            left: `${x}%`,
+            transform: `translate(-50%, -50%) translate(${translateX}%, ${translateY}%)`
+        });
     }
     return positions;
 };
@@ -68,7 +74,7 @@ const getMobilePlayerPositions = (numPlayers: number, humanPlayerIndex: number) 
 };
 
 
-const PokerTable: React.FC<PokerTableProps> = ({ gameState, prevGameState, playerStats, isThinking, onRequestExit, getPlayerCardVisibility, humanPlayerId, winners }) => {
+const PokerTable: React.FC<PokerTableProps> = ({ gameState, prevGameState, playerStats, isThinking, onRequestExit, getPlayerCardVisibility, humanPlayerId, winners, levelTimeRemaining }) => {
     const { players, communityCards, pot, currentPlayerIndex, dealerIndex, smallBlindIndex, bigBlindIndex, gamePhase } = gameState;
     const isMobile = useIsMobile();
     const tableRef = useRef<HTMLDivElement>(null);
@@ -78,6 +84,25 @@ const PokerTable: React.FC<PokerTableProps> = ({ gameState, prevGameState, playe
     const [revealedCards, setRevealedCards] = useState<Card[]>([]);
     const [animatingChips, setAnimatingChips] = useState<any[]>([]);
     const [animatingPotChips, setAnimatingPotChips] = useState<any[]>([]);
+
+    const formatLevelTime = (seconds: number | null) => {
+        if (seconds == null) return '--:--';
+        const clamped = Math.max(0, seconds);
+        const minutes = Math.floor(clamped / 60);
+        const secs = clamped % 60;
+        return `${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    };
+
+    const tournamentInfo = gameState.mode === GameMode.TOURNAMENT ? gameState.tournament : undefined;
+    const playersRemaining = players.filter(player => player.chips > 0).length;
+    const totalPlayers = players.length;
+    const currentLevelIndex = tournamentInfo?.blindLevelIndex ?? 0;
+    const totalLevels = tournamentInfo?.blindSchedule.length ?? 0;
+    const nextLevelIndex = tournamentInfo && tournamentInfo.blindLevelIndex < tournamentInfo.blindSchedule.length - 1
+        ? tournamentInfo.blindLevelIndex + 1
+        : null;
+    const currentBlinds = tournamentInfo ? tournamentInfo.blindSchedule[currentLevelIndex] : null;
+    const nextBlinds = nextLevelIndex != null && tournamentInfo ? tournamentInfo.blindSchedule[nextLevelIndex] : null;
     
     const humanPlayerIndex = humanPlayerId ? players.findIndex(p => p.id === humanPlayerId) : 0;
     const currentPlayer = players[currentPlayerIndex];
@@ -85,6 +110,8 @@ const PokerTable: React.FC<PokerTableProps> = ({ gameState, prevGameState, playe
     const playerPositions = isMobile 
         ? getMobilePlayerPositions(players.length, humanPlayerIndex)
         : getCircularPlayerPositions(players.length, humanPlayerIndex);
+
+    const playerVariant = players.length >= 7 ? 'compact' : 'default';
 
     const getBetPosition = (playerIndex: number) => {
         const playerPosition = playerPositions[playerIndex];
@@ -105,8 +132,15 @@ const PokerTable: React.FC<PokerTableProps> = ({ gameState, prevGameState, playe
             const bottomAngle = Math.PI / 2;
             const angleOffset = bottomAngle - (angleStep * humanPlayerIndex);
             const angle = angleOffset + playerIndex * angleStep;
-            const x = 50 + 18 * Math.cos(angle);
-            const y = 50 + 16 * Math.sin(angle);
+
+            const playerRadiusX = 37;
+            const playerRadiusY = 35;
+            const chipRadiusX = playerRadiusX - 10;
+            const chipRadiusY = (playerIndex === humanPlayerIndex) ? playerRadiusY - 18 : playerRadiusY - 12;
+
+            const x = 50 + chipRadiusX * Math.cos(angle);
+            const y = 50 + chipRadiusY * Math.sin(angle);
+
             return { top: `${y}%`, left: `${x}%`, transform: 'translate(-50%, -50%)' };
         }
     };
@@ -229,8 +263,21 @@ const PokerTable: React.FC<PokerTableProps> = ({ gameState, prevGameState, playe
     }, [winners, players, pot]);
 
 
+    const aspectRatio = isMobile ? '3 / 4' : '16 / 9';
+    const tableMaxWidth = isMobile ? 'min(92vw, 420px)' : 'min(88vw, 1100px)';
+    const tableMaxHeight = isMobile ? '72vh' : '58vh';
+    const tableStyle: React.CSSProperties = {
+        aspectRatio,
+        width: '100%',
+        maxWidth: tableMaxWidth,
+        height: '100%',
+        maxHeight: tableMaxHeight,
+        margin: '0 auto',
+    };
+
     return (
-        <div ref={tableRef} className="w-full max-h-full sm:max-h-none max-w-7xl aspect-[5/8] sm:aspect-[1000/720] relative">
+        <div className="flex h-full w-full items-center justify-center">
+            <div ref={tableRef} className="relative w-full" style={tableStyle}>
             <style>{`
                 @keyframes fly-to-pot {
                     0% {
@@ -271,7 +318,23 @@ const PokerTable: React.FC<PokerTableProps> = ({ gameState, prevGameState, playe
                 </svg>
                 <span className='hidden sm:inline'>Exit</span>
             </button>
-            
+
+            {tournamentInfo && (
+                <div className="absolute top-2 right-2 sm:top-4 sm:right-4 z-50 bg-[#1A1A1A]/85 border-2 border-[#5A5A5A] rounded-lg px-3 py-2 sm:px-4 sm:py-3 text-right shadow-lg shadow-black/40 backdrop-blur-sm space-y-1">
+                    <div className="text-[10px] sm:text-xs uppercase tracking-wide text-neutral-400">Tournament Level</div>
+                    <div className="text-sm sm:text-base font-semibold text-[#F7E7CE]">Level {currentLevelIndex + 1}{totalLevels ? `/${totalLevels}` : ''}</div>
+                    <div className="text-base sm:text-lg font-bold text-[#FFD700]">{gameState.smallBlind}/{gameState.bigBlind}</div>
+                    <div className="text-[10px] sm:text-xs text-neutral-300">Next level in {formatLevelTime(levelTimeRemaining)}</div>
+                    {nextBlinds && (
+                        <div className="text-[10px] sm:text-xs text-neutral-500">Next {nextBlinds.smallBlind}/{nextBlinds.bigBlind}</div>
+                    )}
+                    {tournamentInfo?.pendingLevelIndex != null && (
+                        <div className="text-[10px] sm:text-xs text-[#F59E0B]">Pending increase…</div>
+                    )}
+                    <div className="text-[10px] sm:text-xs text-neutral-300">Players {playersRemaining}/{totalPlayers}</div>
+                </div>
+            )}
+
             <div className="absolute inset-0 flex items-center justify-center">
                 <div className="w-[90%] h-[95%] sm:h-[83.33%] bg-[#1C1C1C] rounded-3xl sm:rounded-full relative border-4 md:border-8 border-[#2D2D2D] shadow-2xl shadow-black/50 flex items-center justify-center">
                     <div className="w-[90%] h-[95%] sm:h-[83.33%] bg-[#0F5F0F] rounded-3xl sm:rounded-full border-2 md:border-4 border-[#B8860B]"></div>
@@ -288,15 +351,16 @@ const PokerTable: React.FC<PokerTableProps> = ({ gameState, prevGameState, playe
                         style={playerPositions[index]}
                         className="absolute"
                     >
-                         <Player
-                            player={player}
-                            stats={playerStats[player.id]}
-                            showCards={getPlayerCardVisibility(player)}
-                            isCurrent={index === currentPlayerIndex}
-                            isDealer={index === dealerIndex}
-                            isSmallBlind={index === smallBlindIndex}
-                            isBigBlind={index === bigBlindIndex}
-                            isWinner={isWinner}
+                        <Player
+                           player={player}
+                           stats={playerStats[player.id]}
+                           showCards={getPlayerCardVisibility(player)}
+                           isCurrent={index === currentPlayerIndex}
+                           isDealer={index === dealerIndex}
+                           isSmallBlind={index === smallBlindIndex}
+                           isBigBlind={index === bigBlindIndex}
+                           isWinner={isWinner}
+                            variant={playerVariant}
                         />
                     </div>
                 );
@@ -374,35 +438,29 @@ const PokerTable: React.FC<PokerTableProps> = ({ gameState, prevGameState, playe
             })}
             
             {/* Community Cards & Pot */}
-             <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 flex flex-col items-center space-y-1 sm:space-y-3 z-10 w-full">
-                {/* Community Cards */}
-                <div className="flex space-x-1 sm:space-x-2 h-20 sm:h-28 items-center">
-                    {revealedCards.map((card, index) => (
-                        <CardComponent key={index} card={card} />
-                    ))}
-                </div>
+            <div className="pointer-events-none absolute inset-0 flex items-center justify-center z-10">
+                <div className={`flex flex-col items-center ${revealedCards.length > 0 ? 'gap-1 sm:gap-3' : ''}`}>
+                    {revealedCards.length > 0 && (
+                        <div className="flex space-x-1 sm:space-x-2 h-20 sm:h-28 items-center">
+                            {revealedCards.map((card, index) => (
+                                <CardComponent key={index} card={card} />
+                            ))}
+                        </div>
+                    )}
 
-                {/* Pot Display */}
-                {pot > 0 && (
-                    <div id="pot-container" className={`bg-gradient-to-b from-black/50 to-black/80 border-2 border-[#D4AF37]/30 rounded-xl px-3 py-1.5 sm:px-6 sm:py-2 text-center shadow-lg shadow-black/50 backdrop-blur-sm flex items-center space-x-2 sm:space-x-4 transition-opacity duration-500 ${winners.length > 0 ? 'opacity-0' : 'opacity-100'}`}>
-                        <PotChips amount={pot} />
-                        <div className='text-left'>
+                    {pot > 0 && (
+                        <div id="pot-container" className={`bg-gradient-to-b from-black/50 to-black/80 border-2 border-[#D4AF37]/30 rounded-xl px-3 py-1.5 sm:px-6 sm:py-2 text-center shadow-lg shadow-black/50 backdrop-blur-sm flex items-center space-x-2 sm:space-x-4 transition-opacity duration-500 ${winners.length > 0 ? 'opacity-0' : 'opacity-100'}`}>
+                            <PotChips amount={pot} />
+                            <div className='text-left'>
                                 <p className="text-xs sm:text-sm font-bold text-[#D4AF37]/80 tracking-widest uppercase">Pot</p>
                                 <p className="text-base sm:text-3xl font-mono font-bold text-[#F7E7CE]">${pot}</p>
+                            </div>
                         </div>
-                    </div>
-                )}
-                
-                {/* Turn Indicator */}
-                 {currentPlayer && gamePhase !== GamePhase.SHOWDOWN && (
-                    <div className="text-center bg-black/40 px-3 py-1 sm:px-4 sm:py-2 rounded-lg backdrop-blur-sm">
-                        <p className="text-sm sm:text-lg font-semibold text-white animate-pulse">
-                            {isThinking && currentPlayer.isAI ? `${currentPlayer.name} is thinking...` : `${currentPlayer.name}'s turn`}
-                        </p>
-                    </div>
-                )}
+                    )}
+                </div>
             </div>
         </div>
+    </div>
     );
 };
 

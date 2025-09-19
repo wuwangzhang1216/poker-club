@@ -35,10 +35,46 @@ export enum ActionType {
     RAISE = 'RAISE',
 }
 
+export enum GameMode {
+    CASUAL = 'CASUAL',
+    TOURNAMENT = 'TOURNAMENT',
+}
+
 export enum AIDifficulty {
     EASY = 'EASY',
     MEDIUM = 'MEDIUM',
     HARD = 'HARD',
+}
+
+export interface BlindLevel {
+    smallBlind: number;
+    bigBlind: number;
+}
+
+export interface TournamentConfig {
+    startingChips: number;
+    blindSchedule: BlindLevel[];
+    levelDurationMs: number;
+    turnTimeLimitSeconds: number;
+}
+
+export interface TournamentState {
+    blindSchedule: BlindLevel[];
+    blindLevelIndex: number;
+    levelDurationMs: number;
+    levelEndsAt: number;
+    turnTimeLimitSeconds: number;
+    pendingLevelIndex?: number | null;
+}
+
+export interface GameStartOptions {
+    mode: GameMode;
+    playerConfig: PlayerConfig;
+    aiCount: number;
+    smallBlind: number;
+    bigBlind: number;
+    aiDifficulty: AIDifficulty;
+    tournamentConfig?: TournamentConfig;
 }
 
 export interface PlayerConfig {
@@ -99,6 +135,8 @@ export interface GameState {
     minRaise: number;
     lastRaiserIndex: number; // Index of the player who last bet or raised
     playerStats?: Record<string, PlayerStats>; // Stats sent from server
+    mode: GameMode;
+    tournament?: TournamentState;
 }
 
 export enum HandRank {
